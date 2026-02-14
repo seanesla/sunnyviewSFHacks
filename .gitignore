@@ -20,3 +20,4 @@ node_modules/
 dev.log
 .env*.local
 .DS_Store
+CLAUDE.md

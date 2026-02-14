@@ -58,6 +58,7 @@ export function SunnyviewExperience() {
   const [phase, setPhase] = useState<Phase>("landing")
   const [entered, setEntered] = useState(false)
   const opened = phase !== "landing"
+  const opening = phase === "opening"
   const globeInteractive = phase === "app"
   const [panelsMounted, setPanelsMounted] = useState(false)
 
@@ -78,8 +79,8 @@ export function SunnyviewExperience() {
     globeFlipPlayedRef.current = false
 
     setPhase("opening")
-    window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 120)
-    window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 950)
+    window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 320)
+    window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 1220)
   }
 
   useLayoutEffect(() => {
@@ -100,9 +101,11 @@ export function SunnyviewExperience() {
     const dy = from.top - to.top
     const sx = from.width / to.width
     const sy = from.height / to.height
+    const uniformScale = Math.max(0.25, Math.min(3.5, Math.max(sx, sy)))
+    const travel = Math.hypot(dx, dy)
 
     // If the delta is tiny, don't bother animating.
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(1 - sx) < 0.01 && Math.abs(1 - sy) < 0.01) {
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(1 - uniformScale) < 0.01) {
       globeFlipPlayedRef.current = true
       return
     }
@@ -110,18 +113,36 @@ export function SunnyviewExperience() {
     globeFlipPlayedRef.current = true
     const anim = el.animate(
       [
-        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
-        { transform: "translate(0px, 0px) scale(1, 1)" },
+        {
+          transformOrigin: "50% 50%",
+          transform: `translate3d(${dx}px, ${dy}px, 0px) scale(${uniformScale})`,
+          filter: "brightness(1.08) saturate(1.08)",
+          opacity: 0.98,
+        },
+        {
+          offset: 0.64,
+          transform: `translate3d(${dx * 0.08}px, ${dy * 0.08}px, 0px) scale(${1 + (uniformScale - 1) * 0.06})`,
+          filter: "brightness(1.02) saturate(1.03)",
+          opacity: 1,
+        },
+        {
+          transformOrigin: "50% 50%",
+          transform: "translate3d(0px, 0px, 0px) scale(1)",
+          filter: "brightness(1) saturate(1)",
+          opacity: 1,
+        },
       ],
       {
-        duration: 980,
-        easing: "cubic-bezier(0.2,0.85,0.2,1)",
+        duration: Math.min(1320, Math.max(920, 860 + travel * 0.3)),
+        easing: "cubic-bezier(0.16,0.88,0.2,1)",
         fill: "both",
       }
     )
     anim.onfinish = () => {
       try {
         el.style.transform = ""
+        el.style.filter = ""
+        el.style.opacity = ""
       } catch {
         // ignore
       }
@@ -702,8 +723,12 @@ export function SunnyviewExperience() {
               <div
                 className={cn(
                   "absolute inset-0 h-full min-h-0 overflow-auto pr-1",
-                  "transition-[opacity,transform,filter] duration-[900ms] delay-150 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                  opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 -translate-x-10 blur-md pointer-events-none"
+                  "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  opened
+                    ? opening
+                      ? "opacity-100 translate-x-0 blur-0 delay-[420ms]"
+                      : "opacity-100 translate-x-0 blur-0 delay-0"
+                    : "opacity-0 -translate-x-10 blur-md pointer-events-none delay-0"
                 )}
               >
                 {panelsMounted ? leftPanel : null}
@@ -715,9 +740,10 @@ export function SunnyviewExperience() {
                 ref={globeCardRef}
                 className={cn(
                   "relative h-[min(560px,62vh)] w-full rounded-2xl border border-border/60 bg-card/10 backdrop-blur-sm lg:h-[min(820px,84vh)]",
-                  "transition-[opacity,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  "transition-[opacity,filter,box-shadow] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                   entered ? "opacity-100" : "opacity-0",
-                  opened ? "blur-0" : "blur-0"
+                  opened ? "blur-0" : "blur-0",
+                  opening ? "shadow-[0_38px_110px_-42px_rgba(0,0,0,0.82)]" : "shadow-[0_24px_72px_-40px_rgba(0,0,0,0.68)]"
                 )}
                 style={{ willChange: "transform" }}
               >
@@ -731,6 +757,22 @@ export function SunnyviewExperience() {
                   variant="hero"
                   className="h-full w-full"
                 />
+
+                <div
+                  aria-hidden
+                  className={cn(
+                    "pointer-events-none absolute inset-0 z-10 rounded-2xl transition-opacity duration-[720ms] ease-[cubic-bezier(0.2,0.85,0.2,1)]",
+                    opening ? "opacity-100" : "opacity-0"
+                  )}
+                >
+                  <div className="absolute inset-0 bg-[radial-gradient(62%_54%_at_50%_46%,oklch(0.84_0.16_var(--accent-hue)_/_0.22),transparent_74%)]" />
+                  <div
+                    className={cn(
+                      "absolute -left-1/3 top-[-22%] h-[150%] w-[66%] rotate-[14deg] bg-[linear-gradient(90deg,transparent_0%,oklch(0.95_0.03_var(--accent-hue)_/_0.36)_52%,transparent_100%)] blur-2xl transition-transform duration-[1100ms] ease-[cubic-bezier(0.18,0.9,0.2,1)]",
+                      opening ? "translate-x-[245%]" : "translate-x-0"
+                    )}
+                  />
+                </div>
 
                 <div
                   className={cn(
@@ -748,8 +790,12 @@ export function SunnyviewExperience() {
                 <div className="h-full min-h-0 overflow-auto pl-1">
                   <div
                     className={cn(
-                      "transition-[opacity,transform,filter] duration-[900ms] delay-100 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                      opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 translate-x-10 blur-md pointer-events-none"
+                      "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                      opened
+                        ? opening
+                          ? "opacity-100 translate-x-0 blur-0 delay-[480ms]"
+                          : "opacity-100 translate-x-0 blur-0 delay-0"
+                        : "opacity-0 translate-x-10 blur-md pointer-events-none delay-0"
                     )}
                   >
                     {panelsMounted ? rightPanel : null}

@@ -49,7 +49,10 @@ export function GlobeView({
         ;(globalThis as any).CESIUM_BASE_URL = "/_next/static/cesium"
 
         const token = (process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN ?? "").trim()
-        if (token) {
+        // Cesium ion imagery shows ion branding + data attributions.
+        // For the landing/hero globe we avoid ion imagery entirely.
+        const useIonImagery = Boolean(token) && !isHero
+        if (useIonImagery) {
           Cesium.Ion.defaultAccessToken = token
         }
 
@@ -71,24 +74,22 @@ export function GlobeView({
           contextOptions: isHero ? ({ webgl: { alpha: true } } as any) : undefined,
         })
 
-        // Satellite imagery:
-        // - With ion token: use Cesium World Imagery.
-        // - Without token: fall back to Esri World Imagery (satellite).
+        // Imagery:
+        // - App: prefer ion if token is present.
+        // - Hero: always use Esri (keeps branding off the landing page).
+        viewer.imageryLayers.removeAll()
         try {
-          viewer.imageryLayers.removeAll()
-          if (token) {
+          if (useIonImagery) {
             const provider = await Cesium.createWorldImageryAsync()
             viewer.imageryLayers.addImageryProvider(provider)
           } else {
             const provider = await Cesium.ArcGisMapServerImageryProvider.fromUrl(
               "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
             )
-            viewer.imageryLayers.addImageryProvider(
-              provider
-            )
+            viewer.imageryLayers.addImageryProvider(provider)
           }
         } catch {
-          // ignore; keep default layers if any
+          // If imagery fails to load, keep the globe untextured.
         }
 
         if (isHero) {
@@ -199,9 +200,9 @@ export function GlobeView({
 
     const start = performance.now()
     let lastNow = start
-    const delayMs = 220
-    const durationMs = 980
-    const maxRadPerSec = 1.65
+    const delayMs = 90
+    const durationMs = 1220
+    const maxRadPerSec = 0.95
 
     const tick = (now: number) => {
       const viewerNow = viewerRef.current
@@ -214,8 +215,7 @@ export function GlobeView({
         return
       }
       const t = Math.min(1, (elapsed - delayMs) / durationMs)
-      const easeOut = 1 - Math.pow(1 - t, 3)
-      const velocity = maxRadPerSec * (1 - easeOut)
+      const velocity = maxRadPerSec * Math.sin(Math.PI * t)
       const dt = Math.min(0.05, (now - lastNow) / 1000)
       lastNow = now
       viewerNow.camera.rotateRight(velocity * dt)
@@ -289,7 +289,9 @@ export function GlobeView({
               Fly to location
             </button>
             <div className="text-[11px] text-muted-foreground">
-              {process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN?.trim() ? "Cesium ion imagery" : "Esri World Imagery (fallback)"}
+              {variant !== "hero" && process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN?.trim()
+                ? "Cesium ion imagery"
+                : "Esri World Imagery"}
             </div>
           </div>
         </div>
