@@ -29,14 +29,14 @@ export function BackgroundScene({ mode, transitionMs = 760 }: BackgroundScenePro
       </div>
 
       <PixelGrid
-        density={gridMode ? 1.1 : 0.9}
+        density={gridMode ? 1.0 : 0.82}
         intensity={intensity}
         motion={motion}
         className={cn(
           "transition-[opacity,filter] duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)]",
           gridMode
             ? "opacity-95 [filter:contrast(1.08)_brightness(0.84)]"
-            : "opacity-65 [filter:contrast(1)_brightness(1)]"
+            : "opacity-52 [filter:contrast(0.96)_brightness(0.9)]"
         )}
       />
 

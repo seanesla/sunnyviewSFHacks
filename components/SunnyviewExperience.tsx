@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Settings2 } from "lucide-react";
+import { gsap } from "gsap";
 import { QRCodeCanvas } from "qrcode.react";
 import { HeroSection } from "@/components/hero-section";
 import { GlobeStage } from "@/components/GlobeStage";
@@ -212,6 +213,9 @@ export function SunnyviewExperience() {
   const startupDone = startupMinElapsed && globeBootReady;
   const [panelsMounted, setPanelsMounted] = useState(false);
   const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup");
+  const topChromeRef = useRef<HTMLDivElement | null>(null);
+  const earthHintRef = useRef<HTMLDivElement | null>(null);
+  const topIntroPlayedRef = useRef(false);
 
   useEffect(() => {
     const reduceMotion =
@@ -252,6 +256,43 @@ export function SunnyviewExperience() {
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", nextUrl);
   }, [phase]);
+
+  useEffect(() => {
+    if (!startupDone || settingsOpen || topIntroPlayedRef.current) return;
+
+    const reduceMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    if (reduceMotion) {
+      topIntroPlayedRef.current = true;
+      return;
+    }
+
+    const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
+
+    if (topChromeRef.current) {
+      tl.fromTo(
+        topChromeRef.current,
+        { y: -14, opacity: 0, scale: 0.985 },
+        { y: 0, opacity: 1, scale: 1, duration: 0.46 },
+        0,
+      );
+    }
+
+    if (!opened && earthHintRef.current) {
+      tl.fromTo(
+        earthHintRef.current,
+        { y: 10, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.4 },
+        0.18,
+      );
+    }
+
+    topIntroPlayedRef.current = true;
+
+    return () => {
+      tl.kill();
+    };
+  }, [opened, settingsOpen, startupDone]);
 
   function openApp() {
     if (phase !== "landing") return;
@@ -1779,7 +1820,12 @@ export function SunnyviewExperience() {
         onPickLocation={pickEnabled ? handlePickLocation : undefined}
         onReadyChange={setGlobeBootReady}
         dim={opened && !settingsOpen}
-        className="z-[2]"
+        className={cn(
+          "z-[2] transition-transform duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+          !opened && !settingsOpen
+            ? "lg:translate-x-[7vw] lg:scale-[1.06] xl:translate-x-[9vw]"
+            : "translate-x-0 scale-100",
+        )}
       />
 
       {startupDone && !settingsOpen && (
@@ -1790,20 +1836,20 @@ export function SunnyviewExperience() {
             opened ? "opacity-100" : "opacity-0",
           )}
         >
-          <div className="dashboard-scrim dashboard-scrim-left absolute inset-y-0 left-0 hidden w-[38vw] lg:block" />
-          <div className="dashboard-scrim dashboard-scrim-right absolute inset-y-0 right-0 hidden w-[38vw] lg:block" />
+          <div className="dashboard-scrim dashboard-scrim-left absolute inset-y-0 left-0 hidden w-[34vw] lg:block" />
+          <div className="dashboard-scrim dashboard-scrim-right absolute inset-y-0 right-0 hidden w-[28vw] lg:block" />
           <div className="dashboard-scrim dashboard-scrim-bottom absolute inset-x-0 bottom-0 h-[24vh] lg:hidden" />
         </div>
       )}
 
       {startupDone && !opened && !settingsOpen && (
-        <div className="pointer-events-none absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+        <div ref={earthHintRef} className="pointer-events-none absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
           Click the Earth
         </div>
       )}
 
       {startupDone && !settingsOpen && (
-        <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
+        <div ref={topChromeRef} className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
           <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/45 bg-primary/12 px-3 py-1.5 shadow-[0_10px_30px_-22px_rgba(0,0,0,0.95)]">
               <span className="text-[10px] font-semibold tracking-[0.24em] text-foreground uppercase">
@@ -1838,24 +1884,24 @@ export function SunnyviewExperience() {
       )}
 
       {startupDone && !settingsOpen && (
-        <div className="pointer-events-none relative z-20 h-full px-2 py-6 sm:px-3 sm:py-8 lg:px-4">
+        <div className="pointer-events-none relative z-20 mx-auto h-full w-full max-w-[1820px] px-4 py-3 sm:px-6 sm:py-4 lg:px-10 lg:py-5 xl:px-14">
           {isMobile === null ? null : !isMobile ? (
             <div
               className={cn(
-                "grid h-full min-h-0 grid-cols-1 gap-6",
+                "grid h-full min-h-0 grid-cols-1 gap-4",
                 opened
-                  ? "lg:grid-cols-[minmax(350px,430px)_minmax(0,1fr)_minmax(350px,430px)]"
-                  : "lg:grid-cols-[minmax(380px,520px)_minmax(0,1fr)]",
+                  ? "lg:grid-cols-[minmax(330px,420px)_minmax(0,1fr)_minmax(330px,420px)] xl:grid-cols-[minmax(350px,440px)_minmax(0,1fr)_minmax(350px,440px)]"
+                  : "lg:grid-cols-[minmax(320px,460px)_minmax(0,1fr)] xl:grid-cols-[minmax(340px,480px)_minmax(0,1fr)]",
               )}
             >
-              <aside className="pointer-events-auto relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
-                <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <aside className="pointer-events-auto relative min-h-0 transition-[opacity,transform] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
+                <div className="absolute inset-0 h-full min-h-0 overflow-x-hidden overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   <div
                     className={cn(
-                      "transition-[opacity,transform,filter] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                      "transition-[opacity,transform] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                       entered && !opened
-                        ? "translate-x-0 opacity-100 blur-0 duration-[900ms]"
-                        : "pointer-events-none -translate-x-8 opacity-0 blur-md duration-[220ms]",
+                        ? "translate-x-0 opacity-100 duration-[900ms]"
+                        : "pointer-events-none -translate-x-8 opacity-0 duration-[220ms]",
                     )}
                   >
                     <HeroSection
@@ -1867,13 +1913,13 @@ export function SunnyviewExperience() {
 
                 <div
                   className={cn(
-                    "absolute inset-0 h-full min-h-0 overflow-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
-                    "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                    "absolute inset-0 h-full min-h-0 overflow-x-hidden overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
+                    "transition-[opacity,transform] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                     opened
                       ? opening
-                        ? "translate-x-0 opacity-100 blur-0 delay-[90ms]"
-                        : "translate-x-0 opacity-100 blur-0 delay-0"
-                      : "pointer-events-none -translate-x-10 opacity-0 blur-md delay-0",
+                        ? "translate-x-0 opacity-100 delay-[90ms]"
+                        : "translate-x-0 opacity-100 delay-0"
+                      : "pointer-events-none -translate-x-10 opacity-0 delay-0",
                   )}
                 >
                   {panelsMounted ? leftPanel : null}
@@ -1883,14 +1929,14 @@ export function SunnyviewExperience() {
               <div className="hidden min-h-0 lg:block" />
 
               {opened ? (
-                <aside className="pointer-events-auto min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
-                  <div className="h-full min-h-0 overflow-auto pl-1">
+                <aside className="pointer-events-auto min-h-0 transition-[opacity,transform] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
+                  <div className="h-full min-h-0 overflow-x-hidden overflow-y-auto pl-1">
                     <div
                       className={cn(
-                        "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                        "transition-[opacity,transform] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                         opening
-                          ? "translate-x-0 opacity-100 blur-0 delay-[130ms]"
-                          : "translate-x-0 opacity-100 blur-0 delay-0",
+                          ? "translate-x-0 opacity-100 delay-[130ms]"
+                          : "translate-x-0 opacity-100 delay-0",
                       )}
                     >
                       {panelsMounted ? rightPanel : null}
@@ -1911,7 +1957,7 @@ export function SunnyviewExperience() {
               </div>
 
               {opened ? (
-                <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity,filter] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
+                <div className="pointer-events-auto absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
                   <div className="glass-card mx-1 mb-2 overflow-hidden rounded-2xl">
                     <div className="flex items-center gap-2 border-b border-border/60 p-2">
                       <button

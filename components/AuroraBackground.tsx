@@ -15,7 +15,7 @@ type OrbSpec = {
 }
 
 const ORBS: OrbSpec[] = [
-  { id: "a", variantClass: "sv-bg__orb--a", left: "16%", top: "18%", size: "78vmax", depth: 0.18, drift: 1.0 },
+  { id: "a", variantClass: "sv-bg__orb--a", left: "34%", top: "21%", size: "62vmax", depth: 0.14, drift: 0.82 },
   { id: "b", variantClass: "sv-bg__orb--b", left: "86%", top: "16%", size: "68vmax", depth: 0.24, drift: 0.92 },
   { id: "c", variantClass: "sv-bg__orb--c", left: "58%", top: "84%", size: "82vmax", depth: 0.3, drift: 1.05 },
   { id: "d", variantClass: "sv-bg__orb--d", left: "74%", top: "56%", size: "52vmax", depth: 0.38, drift: 0.86 },
@@ -37,7 +37,7 @@ export function AuroraBackground({ motionScale = 1, intensity = 1, active = true
   const motionStrength = clamp(motionScale, 0.6, 1.5)
   const intensityStrength = clamp(intensity, 0.65, 1.35)
 
-  const sparkCount = Math.max(8, Math.round(10 + intensityStrength * 6))
+  const sparkCount = Math.max(6, Math.round(7 + intensityStrength * 4))
   const sparkIds = useMemo(() => Array.from({ length: sparkCount }, (_, i) => i), [sparkCount])
   const rootStyle = useMemo(
     () =>
@@ -123,11 +123,11 @@ export function AuroraBackground({ motionScale = 1, intensity = 1, active = true
       for (const orb of orbs) {
         const drift = Number(orb.dataset.drift ?? 1)
         gsap.to(orb, {
-          x: () => gsap.utils.random(-140, 140) * drift * motionStrength,
-          y: () => gsap.utils.random(-120, 120) * drift * motionStrength,
+          x: () => gsap.utils.random(-110, 110) * drift * motionStrength,
+          y: () => gsap.utils.random(-90, 90) * drift * motionStrength,
           scale: () => gsap.utils.random(0.92, 1.14),
           rotation: () => gsap.utils.random(-10, 10),
-          duration: () => t(gsap.utils.random(18, 30)),
+          duration: () => t(gsap.utils.random(20, 34)),
           ease: "sine.inOut",
           repeat: -1,
           yoyo: true,
@@ -169,7 +169,10 @@ export function AuroraBackground({ motionScale = 1, intensity = 1, active = true
         gsap.delayedCall(i * 0.35, () => spawnSpark(spark))
       })
 
-      if (orbWraps.length) {
+      const canUseParallax =
+        document.documentElement.scrollHeight > window.innerHeight + 48
+
+      if (orbWraps.length && canUseParallax) {
         for (const wrap of orbWraps) {
           const depth = Number(wrap.dataset.depth ?? 0.25)
           gsap.to(wrap, {

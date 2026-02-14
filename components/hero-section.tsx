@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { ArrowRight } from "lucide-react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { ArrowRight, BarChart3, LayoutGrid, QrCode } from "lucide-react"
+import { gsap } from "gsap"
 import { AccentColorControl } from "@/components/accent-color-control"
 import { LogoPlate } from "@/components/logo-plate"
 import { ScrambleText } from "@/components/ScrambleText"
@@ -12,6 +13,7 @@ interface HeroSectionProps {
 }
 
 export function HeroSection({ onStart, visible }: HeroSectionProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const [showAccentPicker, setShowAccentPicker] = useState(false)
   const [showLogoHint, setShowLogoHint] = useState(false)
   const [geminiKey, setGeminiKey] = useState("")
@@ -134,9 +136,136 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             : "invalid"
           : "checking"
 
+  const quickCards = useMemo(
+    () => [
+      { label: "Panel Layout", Icon: LayoutGrid },
+      { label: "Energy Report", Icon: BarChart3 },
+      { label: "Share QR", Icon: QrCode },
+    ],
+    []
+  )
+
+  useLayoutEffect(() => {
+    if (!visible) return
+
+    const root = rootRef.current
+    if (!root) return
+
+    const reduceMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+    const q = gsap.utils.selector(root)
+    const listeners: Array<{
+      el: Element
+      enter: () => void
+      leave: () => void
+    }> = []
+
+    const ctx = gsap.context(() => {
+      const staged = q(
+        "[data-motion='logo'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='quick-cards'], [data-motion='gemini']"
+      )
+
+      if (!reduceMotion) {
+        gsap.fromTo(
+          staged,
+          { y: 12, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 0.52,
+            ease: "power3.out",
+            stagger: 0.058,
+          }
+        )
+
+        const quickCardEls = q("[data-motion='quick-card']")
+        gsap.fromTo(
+          quickCardEls,
+          { y: 7, opacity: 0.86, scale: 0.988 },
+          {
+            y: 0,
+            opacity: 1,
+            scale: 1,
+            duration: 0.42,
+            ease: "power2.out",
+            stagger: 0.04,
+            delay: 0.2,
+          }
+        )
+
+        const ctaEl = q("[data-motion='cta']")[0]
+        if (ctaEl) {
+          gsap.to(ctaEl, {
+            y: -0.85,
+            duration: 3.6,
+            ease: "sine.inOut",
+            repeat: -1,
+            yoyo: true,
+            delay: 1.4,
+          })
+        }
+
+        const accentLineEl = q("[data-motion='accent-line']")[0]
+        if (accentLineEl) {
+          gsap.to(accentLineEl, {
+            opacity: 0.96,
+            duration: 3.4,
+            ease: "sine.inOut",
+            repeat: -1,
+            yoyo: true,
+            delay: 1.25,
+          })
+        }
+      }
+
+      if (reduceMotion) return
+
+      const interactiveEls = q("[data-motion='quick-card'], [data-motion='cta']")
+
+      for (const el of interactiveEls) {
+        const enter = () => {
+          gsap.to(el, {
+            y: -2.1,
+            scale: 1.01,
+            duration: 0.22,
+            ease: "power2.out",
+            overwrite: "auto",
+          })
+        }
+
+        const leave = () => {
+          gsap.to(el, {
+            y: 0,
+            scale: 1,
+            duration: 0.26,
+            ease: "power2.out",
+            overwrite: "auto",
+          })
+        }
+
+        el.addEventListener("mouseenter", enter)
+        el.addEventListener("mouseleave", leave)
+        el.addEventListener("focusin", enter)
+        el.addEventListener("focusout", leave)
+        listeners.push({ el, enter, leave })
+      }
+    }, root)
+
+    return () => {
+      for (const { el, enter, leave } of listeners) {
+        el.removeEventListener("mouseenter", enter)
+        el.removeEventListener("mouseleave", leave)
+        el.removeEventListener("focusin", enter)
+        el.removeEventListener("focusout", leave)
+      }
+      ctx.revert()
+    }
+  }, [visible])
+
   return (
     <div
-      className="flex flex-col justify-center gap-6 transition-[opacity,transform,filter] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0"
+      ref={rootRef}
+      className="hero-landing relative isolate flex w-full max-w-[30rem] flex-col justify-center gap-5 transition-[opacity,transform,filter] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0 xl:max-w-[31rem]"
       style={{
         transitionDuration: visible ? "900ms" : "220ms",
         opacity: visible ? 1 : 0,
@@ -145,8 +274,8 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         pointerEvents: visible ? "auto" : "none",
       }}
     >
-      <div className="flex flex-col gap-3">
-        <div className="relative w-fit">
+      <div className="relative z-20 flex flex-col gap-3">
+        <div className="relative z-[60] w-fit isolate" data-motion="logo">
           <button
             type="button"
             onClick={handleLogoClick}
@@ -158,112 +287,116 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
           </button>
 
           {showLogoHint && !showAccentPicker ? (
-            <div className="logo-hint-tooltip absolute left-0 top-[calc(100%+0.7rem)] z-20 w-[min(86vw,21rem)] rounded-lg border border-primary/45 bg-background/80 px-3 py-2 text-xs text-foreground shadow-[0_20px_40px_-26px_rgba(0,0,0,0.9)] backdrop-blur-md">
+            <div className="logo-hint-tooltip pointer-events-auto absolute left-0 top-[calc(100%+0.7rem)] z-[80] w-[min(86vw,21rem)] rounded-lg border border-primary/45 bg-background/90 px-3 py-2 text-xs text-foreground shadow-[0_20px_40px_-26px_rgba(0,0,0,0.9)] backdrop-blur-md">
               Click the logo to adjust the accent color.
             </div>
           ) : null}
 
           {showAccentPicker ? (
-            <div className="logo-accent-popover absolute left-0 top-[calc(100%+0.7rem)] z-20 w-[min(86vw,22rem)] rounded-xl border border-border/75 bg-background/75 p-3 shadow-[0_24px_50px_-26px_rgba(0,0,0,0.95)] backdrop-blur-md">
+            <div className="logo-accent-popover pointer-events-auto absolute left-0 top-[calc(100%+0.7rem)] z-[90] w-[min(86vw,22rem)] rounded-xl border border-border/85 bg-background/95 p-3 shadow-[0_28px_64px_-30px_rgba(0,0,0,0.98)] backdrop-blur-md">
               <AccentColorControl compact showSwatch={false} />
             </div>
           ) : null}
         </div>
 
-        <span className="text-sm font-light tracking-[0.2em] text-primary uppercase">
+        <span className="text-sm font-light tracking-[0.2em] text-primary uppercase" data-motion="kicker">
           Solar Feasibility in 30 Seconds
         </span>
-        <h1 className="text-balance text-5xl font-extralight leading-tight tracking-tight text-foreground lg:text-7xl">
+        <h1 className="hero-landing__title text-balance text-[clamp(3rem,6.4vw,6rem)] font-extralight leading-[0.98] tracking-tight text-foreground" data-motion="headline">
           <ScrambleText text="Trace a roof." trigger={visible} />
           <br />
-          <span className="text-primary text-glow">
+          <span className="text-primary text-glow" data-motion="accent-line">
             <ScrambleText text="See the potential." trigger={visible} speed={45} />
           </span>
         </h1>
       </div>
 
-      <p className="max-w-md text-pretty leading-relaxed text-muted-foreground">
+      <p className="hero-landing__copy max-w-[34ch] text-pretty leading-relaxed text-muted-foreground" data-motion="copy">
         Sunnyview turns any satellite view into an instant solar layout.
         Draw a roof polygon, and watch panels fill in live with real energy
         and CO2 estimates. No account needed.
       </p>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center" data-motion="cta-row">
         <button
           onClick={onStart}
-          className="group flex h-12 items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:gap-3 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-primary/20"
+          className="hero-cta-premium group flex h-11 items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:gap-3 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-primary/20"
+          data-motion="cta"
         >
           Launch Demo
           <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
         </button>
-        <span className="text-xs text-muted-foreground">
+        <span className="hero-landing__cta-hint text-xs text-muted-foreground">
           or click the Earth to begin
         </span>
       </div>
 
-        <div className="glass-card gradient-border rounded-lg p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[11px] font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">Stored locally. Status shows only Valid/Invalid.</div>
-            </div>
-            <div className="flex items-center gap-2">
-              {geminiKeyState === "checking" ? (
-                <div className="rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground">
-                  Checking…
-                </div>
-              ) : null}
-              {geminiKeyState === "valid" || geminiKeyState === "invalid" ? (
-                <div
-                  className={
-                    geminiKeyState === "valid"
-                      ? "rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-                      : "rounded-md border border-rose-400/35 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
-                  }
-                >
-                  {geminiKeyState === "valid" ? "Valid" : "Invalid"}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
-                onClick={() => setShowGeminiKey((v) => !v)}
-              >
-                {showGeminiKey ? "Hide" : "Show"}
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-2">
-            <input
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-              type={showGeminiKey ? "text" : "password"}
-              placeholder="Paste your Gemini API key"
-              autoComplete="off"
-              spellCheck={false}
-              className={
-                "h-10 w-full rounded-lg border bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 " +
-                (geminiKeyState === "valid"
-                  ? "border-emerald-400/55 focus-visible:ring-emerald-400/35"
-                  : geminiKeyState === "invalid" && geminiKey.trim().length > 0
-                    ? "border-rose-400/55 focus-visible:ring-rose-400/35"
-                    : "border-input focus-visible:ring-primary/50")
-              }
-            />
-          </div>
-        </div>
-
-      {/* preview cards */}
-      <div className="mt-4 flex gap-3">
-        {["Panel Layout", "Energy Report", "Share QR"].map(label => (
+      <div className="hero-landing__quick-cards mt-1 grid grid-cols-3 gap-2 sm:gap-3" data-motion="quick-cards">
+        {quickCards.map(({ label, Icon }) => (
           <div
             key={label}
-            className="glass-card gradient-border flex h-20 w-28 items-center justify-center"
+            className="hero-quick-card glass-card gradient-border flex h-16 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-primary/38 bg-background/45 px-2 text-center shadow-[0_10px_26px_-18px_rgba(0,0,0,0.95)]"
+            data-motion="quick-card"
           >
-            <span className="text-[10px] text-muted-foreground">{label}</span>
+            <Icon size={13} className="text-primary/90" />
+            <span className="text-[11px] font-semibold text-foreground/95">{label}</span>
           </div>
         ))}
+      </div>
+
+      <div className="hero-landing__gemini glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="gemini">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">Stored locally in this browser (localStorage). Format + live check.</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className={
+                geminiKeyState === "valid"
+                  ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                  : geminiKeyState === "checking"
+                    ? "rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"
+                    : geminiKeyState === "invalid"
+                      ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
+                      : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
+              }
+            >
+              {geminiKeyState === "valid"
+                ? "Valid"
+                : geminiKeyState === "checking"
+                  ? "Checking…"
+                  : geminiKeyState === "invalid"
+                    ? "Invalid"
+                    : "Optional"}
+            </div>
+            <button
+              type="button"
+              className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+              onClick={() => setShowGeminiKey((v) => !v)}
+            >
+              {showGeminiKey ? "Hide" : "Show"}
+            </button>
+          </div>
+        </div>
+        <div className="mt-3">
+          <input
+            value={geminiKey}
+            onChange={(e) => setGeminiKey(e.target.value)}
+            type={showGeminiKey ? "text" : "password"}
+            placeholder="Paste your Gemini API key"
+            autoComplete="off"
+            spellCheck={false}
+            className={
+              "h-10 w-full rounded-lg border bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 " +
+              (geminiKeyState === "valid"
+                ? "border-emerald-400/55 focus-visible:ring-emerald-400/35"
+                : geminiKeyState === "invalid" && rawGeminiKey.length > 0
+                  ? "border-rose-400/55 focus-visible:ring-rose-400/35"
+                  : "border-input focus-visible:ring-primary/50")
+            }
+          />
+        </div>
       </div>
     </div>
   )

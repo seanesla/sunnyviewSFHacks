@@ -251,7 +251,7 @@ export function GlobeView({
 
         viewer.useBrowserRecommendedResolution = true
         if (isHero) {
-          viewer.resolutionScale = 0.9
+          viewer.resolutionScale = 0.84
         }
 
         if (isHero) {
@@ -527,7 +527,7 @@ export function GlobeView({
       // ignore
     }
 
-    if (reduceMotion) return
+    if (reduceMotion || isHero) return
 
     const speedRadPerSec = 0.03
     const delayMs = 1050
@@ -560,7 +560,7 @@ export function GlobeView({
       }
       landingSpinLastNowRef.current = null
     }
-  }, [landingActive, ready])
+  }, [isHero, landingActive, ready])
 
   useEffect(() => {
     if (!ready) return
@@ -605,8 +605,9 @@ export function GlobeView({
       const orbitRadius = ellipsoid.maximumRadius * 1.06
       const orbitPlaneTiltRad = Cesium.Math.toRadians(82)
       const orbitPlanePrecessionRadPerSec = Cesium.Math.toRadians(28)
-      const trailPointCount = 64
+      const trailPointCount = 36
       const speedRadPerSec = Cesium.Math.toRadians(96)
+      const frameIntervalMs = 1000 / 26
 
       const orbitNormalScratch = new Cesium.Cartesian3()
       const orbitBasisUScratch = new Cesium.Cartesian3()
@@ -820,6 +821,13 @@ export function GlobeView({
 
       const tick = (now: number) => {
         if (cancelled) return
+
+        const lastNow = orbitLastNowRef.current
+        if (lastNow !== null && now - lastNow < frameIntervalMs) {
+          orbitRafRef.current = window.requestAnimationFrame(tick)
+          return
+        }
+
         const rendered = drawFrame(now, true)
         if (!rendered) {
           clearLandingOrbit()

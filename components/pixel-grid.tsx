@@ -40,6 +40,8 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
 
   const CELL_SIZE = Math.round(clamp(40 / densityScale, 24, 56))
   const GAP = 1
+  const MAX_RENDER_DPR = 1.6
+  const FRAME_INTERVAL_MS = 40
 
   const initCells = useCallback((cols: number, rows: number) => {
     const cells: Cell[] = []
@@ -66,7 +68,7 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
     const cellStride = CELL_SIZE + GAP
 
     function resize() {
-      renderDpr = window.devicePixelRatio || 1
+      renderDpr = Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR)
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       canvasEl.width = Math.floor(window.innerWidth * renderDpr)
       canvasEl.height = Math.floor(window.innerHeight * renderDpr)
@@ -87,8 +89,8 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
     window.addEventListener("mousemove", onMouseMove)
 
     if (reduceMotion) {
-      const w = canvasEl.width / (window.devicePixelRatio || 1)
-      const h = canvasEl.height / (window.devicePixelRatio || 1)
+      const w = canvasEl.width / renderDpr
+      const h = canvasEl.height / renderDpr
       ctx.clearRect(0, 0, w, h)
       return () => {
         window.removeEventListener("resize", resize)
@@ -98,7 +100,7 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
 
     function animate() {
       const now = performance.now()
-      if (now - lastFrameRef.current < 33) {
+      if (now - lastFrameRef.current < FRAME_INTERVAL_MS) {
         animRef.current = requestAnimationFrame(animate)
         return
       }
@@ -190,7 +192,7 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
       window.removeEventListener("mousemove", onMouseMove)
       document.removeEventListener("visibilitychange", onVisibilityChange)
     }
-  }, [CELL_SIZE, initCells, intensityScale, motionScale])
+  }, [CELL_SIZE, FRAME_INTERVAL_MS, initCells, intensityScale, motionScale])
 
   return (
     <canvas

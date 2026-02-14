@@ -80,18 +80,20 @@ export function MouseSpotlight({ strength = 1, className }: MouseSpotlightProps)
     }
   }, [])
 
-  const glowRadius = Math.round(420 + strengthScale * 160)
-  const glowAlpha = (0.028 + strengthScale * 0.025).toFixed(3)
+  const glowRadius = Math.round(360 + strengthScale * 130)
+  const coreRadius = Math.round(glowRadius * 0.42)
+  const glowAlpha = 0.046 + strengthScale * 0.036
+  const coreAlpha = Math.min(0.2, glowAlpha * 1.58)
 
   return (
     <div
       className={cn(
-        "pointer-events-none fixed inset-0 z-0 opacity-20 transition-opacity duration-300 motion-reduce:hidden",
+        "pointer-events-none fixed inset-0 z-0 opacity-30 transition-opacity duration-300 motion-reduce:hidden",
         className
       )}
       style={{
         background:
-          `radial-gradient(${glowRadius}px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), oklch(0.72 0.12 var(--accent-hue) / ${glowAlpha}), transparent 44%)`,
+          `radial-gradient(${coreRadius}px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), oklch(0.76 0.16 var(--accent-hue) / ${coreAlpha.toFixed(3)}), transparent 54%), radial-gradient(${glowRadius}px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), oklch(0.72 0.12 var(--accent-hue) / ${glowAlpha.toFixed(3)}), transparent 56%)`,
       }}
     />
   )
