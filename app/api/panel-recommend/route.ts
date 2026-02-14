@@ -3,6 +3,21 @@ import { z } from "zod"
 
 export const runtime = "nodejs"
 
+const LOG_PREFIX = "[panel-recommend]"
+const MODEL_NOT_FOUND_RE = /not found|not supported|not available|unsupported model/i
+
+function uniqueModels(models: Array<string | null | undefined>) {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of models) {
+    const model = String(raw ?? "").trim()
+    if (!model || seen.has(model)) continue
+    seen.add(model)
+    out.push(model)
+  }
+  return out
+}
+
 const BodySchema = z.object({
   lat: z.number().optional(),
   lng: z.number().optional(),
@@ -56,6 +71,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 501 })
   }
 
+  const configuredModel = process.env.GEMINI_MODEL?.trim() || ""
+  const modelsToTry = uniqueModels([
+    configuredModel,
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+  ])
+
   const body = await req.json().catch(() => ({}))
   const parsed = BodySchema.safeParse(body)
   if (!parsed.success) {
@@ -64,6 +87,14 @@ export async function POST(req: Request) {
 
   const { lat, lng, roofAreaM2, options, currentId, notes } = parsed.data
   const loc = lat !== undefined && lng !== undefined ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : "unknown"
+
+  console.info(`${LOG_PREFIX} request`, {
+    location: loc,
+    roofAreaM2: Number(roofAreaM2.toFixed(1)),
+    options: options.length,
+    currentId: currentId ?? null,
+    modelsToTry,
+  })
 
   const optionLines = options
     .map((o) => {
@@ -95,62 +126,113 @@ Return STRICT JSON with keys:
 { "selectedId": string, "brand": string, "model": string, "why": string[], "caveats": string[] }
 No extra keys, no markdown.`
 
-  const url = new URL(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-  )
-  url.searchParams.set("key", key)
-
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 300,
-        responseMimeType: "application/json",
-      },
-    }),
-  })
-
-  const json = (await res.json().catch(() => null)) as any
-  if (!res.ok) {
-    const msg =
-      typeof json?.error?.message === "string"
-        ? json.error.message
-        : `Gemini error (${res.status})`
-    return NextResponse.json({ error: msg }, { status: 502 })
+  const allowedIds = new Set(options.map((o) => o.id))
+  const requestBody = {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 300,
+      responseMimeType: "application/json",
+    },
   }
 
-  const text = extractText(json)
-  const parsedJson = tryParseJson(text)
-  const out = parsedJson && typeof parsedJson === "object" ? parsedJson : null
+  const attemptedModels: string[] = []
+  let lastUpstreamError = "Gemini unavailable"
 
-  const selectedId = typeof out?.selectedId === "string" ? out.selectedId : null
-  const brand = typeof out?.brand === "string" ? out.brand : null
-  const model = typeof out?.model === "string" ? out.model : null
-  const why = Array.isArray(out?.why) ? out.why.map((v: any) => String(v)).filter(Boolean) : []
-  const caveats = Array.isArray(out?.caveats) ? out.caveats.map((v: any) => String(v)).filter(Boolean) : []
+  for (const modelName of modelsToTry) {
+    attemptedModels.push(modelName)
+    const url = new URL(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`
+    )
+    url.searchParams.set("key", key)
 
-  const allowedIds = new Set(options.map((o) => o.id))
-  if (!selectedId || !allowedIds.has(selectedId) || !brand || !model) {
+    console.info(`${LOG_PREFIX} trying model`, { model: modelName })
+
+    let res: Response
+    let json: any = null
+    try {
+      res = await fetch(url.toString(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+      })
+      json = (await res.json().catch(() => null)) as any
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Network error"
+      lastUpstreamError = message
+      console.error(`${LOG_PREFIX} request failed`, { model: modelName, message })
+      continue
+    }
+
+    if (!res.ok) {
+      const msg =
+        typeof json?.error?.message === "string"
+          ? json.error.message
+          : `Gemini error (${res.status})`
+      lastUpstreamError = msg
+      console.warn(`${LOG_PREFIX} model failed`, {
+        model: modelName,
+        status: res.status,
+        message: msg.slice(0, 240),
+      })
+      const canRetryModel = res.status === 404 || MODEL_NOT_FOUND_RE.test(msg)
+      if (canRetryModel) continue
+      return NextResponse.json({ error: msg, attemptedModels }, { status: 502 })
+    }
+
+    const text = extractText(json)
+    const parsedJson = tryParseJson(text)
+    const out = parsedJson && typeof parsedJson === "object" ? parsedJson : null
+
+    const selectedId = typeof out?.selectedId === "string" ? out.selectedId : null
+    const brand = typeof out?.brand === "string" ? out.brand : null
+    const model = typeof out?.model === "string" ? out.model : null
+    const why = Array.isArray(out?.why) ? out.why.map((v: any) => String(v)).filter(Boolean) : []
+    const caveats = Array.isArray(out?.caveats) ? out.caveats.map((v: any) => String(v)).filter(Boolean) : []
+
+    if (!selectedId || !allowedIds.has(selectedId) || !brand || !model) {
+      lastUpstreamError = "Failed to parse Gemini JSON"
+      console.warn(`${LOG_PREFIX} parse failed`, {
+        model: modelName,
+        selectedId,
+        hasBrand: !!brand,
+        hasModel: !!model,
+      })
+      return NextResponse.json(
+        {
+          error: "Failed to parse Gemini JSON",
+          attemptedModels,
+          raw: text.slice(0, 800),
+        },
+        { status: 502 }
+      )
+    }
+
+    console.info(`${LOG_PREFIX} success`, {
+      model: modelName,
+      selectedId,
+      brand,
+      panelModel: model,
+    })
+
     return NextResponse.json(
       {
-        error: "Failed to parse Gemini JSON",
-        raw: text.slice(0, 800),
+        selectedId,
+        brand,
+        model,
+        why: why.slice(0, 4),
+        caveats: caveats.slice(0, 3),
+        usedModel: modelName,
       },
-      { status: 502 }
+      { status: 200 }
     )
   }
 
   return NextResponse.json(
     {
-      selectedId,
-      brand,
-      model,
-      why: why.slice(0, 4),
-      caveats: caveats.slice(0, 3),
+      error: lastUpstreamError,
+      attemptedModels,
     },
-    { status: 200 }
+    { status: 502 }
   )
 }

@@ -137,6 +137,7 @@ export function RoofCanvas({
   const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const [imageError, setImageError] = useState<{ src: string; message: string } | null>(null)
 
   const downVertexIdxRef = useRef<number | null>(null)
   const downPosRef = useRef<Point | null>(null)
@@ -528,16 +529,34 @@ export function RoofCanvas({
       return
     }
 
+    let cancelled = false
     const img = new Image()
     img.onload = () => {
+      if (cancelled) return
       imgRef.current = img
+      setImageError(null)
+      console.info("[roof-canvas] satellite image loaded", {
+        src: imageSrc,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+      })
       invalidate()
     }
     img.onerror = () => {
+      if (cancelled) return
       imgRef.current = null
+      setImageError({
+        src: imageSrc,
+        message: "Satellite image failed to load. Check API/network and try again.",
+      })
+      console.error("[roof-canvas] satellite image failed", { src: imageSrc })
       invalidate()
     }
     img.src = imageSrc
+
+    return () => {
+      cancelled = true
+    }
   }, [background.kind, imageSrc, invalidate])
 
   useEffect(() => {
@@ -796,6 +815,11 @@ export function RoofCanvas({
           onPointerUp={onPointerUp}
           onDoubleClick={onDoubleClick}
         />
+        {background.kind === "image" && imageError?.src === imageSrc && (
+          <div className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-rose-300/35 bg-rose-500/15 px-3 py-2 text-[11px] text-rose-100 backdrop-blur">
+            {imageError.message}
+          </div>
+        )}
       </div>
     </div>
   )

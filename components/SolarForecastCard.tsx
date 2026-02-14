@@ -12,6 +12,10 @@ type Day = {
 
 type ForecastPayload = {
   days: Day[]
+  meta?: {
+    source?: string
+    warning?: string
+  } | null
   worthIt?: {
     verdict?: "good" | "maybe" | "unlikely"
     paybackYears?: number | null
@@ -60,6 +64,14 @@ export function SolarForecastCard({
     setLoading(true)
     setError(null)
 
+    console.info("[forecast] client request", {
+      lat: Number(lat.toFixed(5)),
+      lng: Number(lng.toFixed(5)),
+      dcKw: Number(dcKw.toFixed(3)),
+      lossesPct,
+      panelCount,
+    })
+
     const url = new URL("/api/forecast", window.location.origin)
     url.searchParams.set("lat", String(lat))
     url.searchParams.set("lng", String(lng))
@@ -72,10 +84,20 @@ export function SolarForecastCard({
         const data = (await res.json().catch(() => null)) as any
         if (!res.ok) throw new Error(String(data?.error ?? `Forecast failed (${res.status})`))
         const days = Array.isArray(data?.days) ? data.days : []
-        setPayload({ days, worthIt: data?.worthIt ?? null })
+        setPayload({ days, meta: data?.meta ?? null, worthIt: data?.worthIt ?? null })
+        console.info("[forecast] client success", {
+          days: days.length,
+          source: typeof data?.meta?.source === "string" ? data.meta.source : "unknown",
+        })
       } catch (e) {
         if (ac.signal.aborted) return
-        setError(e instanceof Error ? e.message : "Forecast failed")
+        const message = e instanceof Error ? e.message : "Forecast failed"
+        console.error("[forecast] client error", { message })
+        if (/fetch failed|network|timeout|failed to fetch/i.test(message)) {
+          setError("Forecast service is temporarily unavailable. Please try again shortly.")
+        } else {
+          setError(message)
+        }
         setPayload(null)
       } finally {
         if (!ac.signal.aborted) setLoading(false)
@@ -88,6 +110,7 @@ export function SolarForecastCard({
   const days = useMemo(() => payload?.days ?? [], [payload])
   const sum7 = useMemo(() => days.reduce((s, d) => s + (Number(d?.estKwh) || 0), 0), [days])
   const avgDaily = days.length ? sum7 / days.length : 0
+  const warning = typeof payload?.meta?.warning === "string" ? payload.meta.warning : null
   const worth = payload?.worthIt ?? null
   const badge = verdictLabel(worth?.verdict)
 
@@ -109,6 +132,7 @@ export function SolarForecastCard({
           <div className="mt-1 text-[11px] text-muted-foreground">
             Uses Open-Meteo radiation + your current layout (rough).
           </div>
+          {warning ? <div className="mt-1 text-[11px] text-amber-300">{warning}</div> : null}
         </div>
         <div className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${badge.cls}`}>{badge.text}</div>
       </div>

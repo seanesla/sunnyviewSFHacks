@@ -479,6 +479,14 @@ export function SunnyviewExperience() {
 
     (async () => {
       try {
+        console.info("[panel-recommend] client request", {
+          lat: Number(lat.toFixed(5)),
+          lng: Number(lng.toFixed(5)),
+          roofAreaM2: Number(roofAreaM2.toFixed(1)),
+          options: fits.length,
+          panelSpecMode,
+        });
+
         const res = await fetch(apiUrl("/api/panel-recommend"), {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -495,9 +503,14 @@ export function SunnyviewExperience() {
         });
         const data = (await res.json().catch(() => null)) as any;
         if (!res.ok) {
-          throw new Error(
-            typeof data?.error === "string" ? data.error : `Panel recommendation failed (${res.status})`,
-          );
+          const message =
+            typeof data?.error === "string" ? data.error : `Panel recommendation failed (${res.status})`;
+          console.warn("[panel-recommend] client non-200", {
+            status: res.status,
+            message,
+            attemptedModels: Array.isArray(data?.attemptedModels) ? data.attemptedModels : undefined,
+          });
+          throw new Error(message);
         }
 
         const selectedId = typeof data?.selectedId === "string" ? data.selectedId : null;
@@ -506,6 +519,13 @@ export function SunnyviewExperience() {
         const why = Array.isArray(data?.why) ? data.why.map((v: any) => String(v)) : [];
         const caveats = Array.isArray(data?.caveats) ? data.caveats.map((v: any) => String(v)) : [];
         if (!selectedId || !brand || !model) throw new Error("Invalid Gemini response");
+
+        console.info("[panel-recommend] client success", {
+          selectedId,
+          brand,
+          panelModel: model,
+          usedModel: typeof data?.usedModel === "string" ? data.usedModel : null,
+        });
 
         setPanelBrandRec({
           selectedId,
@@ -532,6 +552,9 @@ export function SunnyviewExperience() {
         }
       } catch (e) {
         if (ac.signal.aborted) return;
+        console.error("[panel-recommend] client error", {
+          message: e instanceof Error ? e.message : "Panel recommendation failed.",
+        });
         setPanelBrandError(e instanceof Error ? e.message : "Panel recommendation failed.");
       } finally {
         if (!ac.signal.aborted) setPanelBrandBusy(false);

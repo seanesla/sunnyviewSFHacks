@@ -2,6 +2,8 @@ import { NextRequest } from "next/server"
 
 export const runtime = "nodejs"
 
+const LOG_PREFIX = "[static-map]"
+
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n))
 }
@@ -13,7 +15,6 @@ function parseNum(value: string | null) {
 }
 
 function mercatorProject(lat: number, lng: number) {
-  // EPSG:3857 spherical mercator (meters)
   const R = 6378137
   const clampedLat = clamp(lat, -85.05112878, 85.05112878)
   const x = (lng * Math.PI * R) / 180
@@ -22,7 +23,6 @@ function mercatorProject(lat: number, lng: number) {
 }
 
 function mercatorResolutionMetersPerPx(zoom: number) {
-  // Pixel resolution in EPSG:3857 at given zoom (slippy map scale).
   const R = 6378137
   const z = Math.round(clamp(zoom, 0, 22))
   return (2 * Math.PI * R) / (256 * Math.pow(2, z))
@@ -39,7 +39,6 @@ async function geocodeAddressViaNominatim(address: string, signal: AbortSignal) 
     signal,
     headers: {
       accept: "application/json",
-      // Nominatim policy requests identifying UA; this is best-effort in a demo app.
       "user-agent": "sunnyviewSFHacks/1.0 (static-map proxy)",
     },
   })
@@ -74,10 +73,17 @@ async function geocodeAddressViaEsri(address: string, signal: AbortSignal) {
 
 async function geocodeAddress(address: string, signal: AbortSignal) {
   try {
-    return await geocodeAddressViaEsri(address, signal)
-  } catch {
-    return await geocodeAddressViaNominatim(address, signal)
+    const out = await geocodeAddressViaEsri(address, signal)
+    console.info(`${LOG_PREFIX} geocode`, { provider: "esri", lat: Number(out.lat.toFixed(6)), lng: Number(out.lng.toFixed(6)) })
+    return out
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Esri geocoder failed"
+    console.warn(`${LOG_PREFIX} geocode provider failed`, { provider: "esri", message })
   }
+
+  const out = await geocodeAddressViaNominatim(address, signal)
+  console.info(`${LOG_PREFIX} geocode`, { provider: "nominatim", lat: Number(out.lat.toFixed(6)), lng: Number(out.lng.toFixed(6)) })
+  return out
 }
 
 export async function GET(req: NextRequest) {
@@ -92,11 +98,22 @@ export async function GET(req: NextRequest) {
   const h = clamp(Math.round(parseNum(searchParams.get("h")) ?? 360), 64, 2048)
   const scale = clamp(Math.round(parseNum(searchParams.get("scale")) ?? 2), 1, 2)
 
+  const timeoutMs = 12000
   const ac = new AbortController()
   const signal = ac.signal
+  const timeout = setTimeout(() => ac.abort(), timeoutMs)
 
   let lat = latParam
   let lng = lngParam
+
+  console.info(`${LOG_PREFIX} request`, {
+    hasAddress: !!address,
+    hasCoords: lat !== null && lng !== null,
+    zoom,
+    w,
+    h,
+    scale,
+  })
 
   try {
     if (lat === null || lng === null) {
@@ -115,8 +132,6 @@ export async function GET(req: NextRequest) {
     lat = clamp(lat, -85.05112878, 85.05112878)
     lng = clamp(lng, -180, 180)
 
-    // `scale` is treated like device-pixel-ratio: increase output resolution
-    // without changing the geographic bbox.
     const outW = clamp(w * scale, 64, 2048)
     const outH = clamp(h * scale, 64, 2048)
 
@@ -126,8 +141,6 @@ export async function GET(req: NextRequest) {
     const halfHm = (resMPerPx * h) / 2
     const bbox = `${(x - halfWm).toFixed(6)},${(y - halfHm).toFixed(6)},${(x + halfWm).toFixed(6)},${(y + halfHm).toFixed(6)}`
 
-    // No API key required for this public export endpoint (good for demos).
-    // Imagery/terms are governed by Esri/ArcGIS Online.
     const staticUrl = new URL("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export")
     staticUrl.searchParams.set("bbox", bbox)
     staticUrl.searchParams.set("bboxSR", "3857")
@@ -136,28 +149,76 @@ export async function GET(req: NextRequest) {
     staticUrl.searchParams.set("format", "png32")
     staticUrl.searchParams.set("f", "image")
 
-    const imgRes = await fetch(staticUrl.toString(), { signal, headers: { accept: "image/*" } })
+    const startedAt = Date.now()
+    const imgRes = await fetch(staticUrl.toString(), { signal, headers: { accept: "image/*" }, cache: "no-store" })
+    const durationMs = Date.now() - startedAt
+
     if (!imgRes.ok) {
       const text = await imgRes.text().catch(() => "")
+      console.warn(`${LOG_PREFIX} upstream non-200`, {
+        status: imgRes.status,
+        durationMs,
+        details: text.slice(0, 220),
+      })
       return Response.json(
         { error: `Static image failed (${imgRes.status})`, details: text.slice(0, 500) },
         { status: 502 }
       )
     }
 
-    const contentType = imgRes.headers.get("content-type") ?? "image/png"
+    const contentTypeRaw = imgRes.headers.get("content-type") ?? ""
+    const contentType = contentTypeRaw.toLowerCase()
+    if (!contentType.startsWith("image/")) {
+      const text = await imgRes.text().catch(() => "")
+      console.warn(`${LOG_PREFIX} non-image response`, {
+        contentType: contentTypeRaw,
+        durationMs,
+        details: text.slice(0, 220),
+      })
+      return Response.json(
+        {
+          error: "Static map provider returned a non-image response.",
+          details: text.slice(0, 500),
+        },
+        { status: 502 }
+      )
+    }
+
     const body = await imgRes.arrayBuffer()
+    if (!body.byteLength) {
+      console.warn(`${LOG_PREFIX} empty image body`, { durationMs })
+      return Response.json({ error: "Static map provider returned an empty image." }, { status: 502 })
+    }
+
+    console.info(`${LOG_PREFIX} success`, {
+      durationMs,
+      bytes: body.byteLength,
+      contentType: contentTypeRaw,
+      lat: Number(lat.toFixed(6)),
+      lng: Number(lng.toFixed(6)),
+      zoom,
+    })
 
     return new Response(body, {
       status: 200,
       headers: {
-        "content-type": contentType,
+        "content-type": contentTypeRaw || "image/png",
         "cache-control": "public, max-age=86400, s-maxage=86400",
       },
     })
   } catch (e) {
-    return Response.json({ error: e instanceof Error ? e.message : "Static map failed." }, { status: 500 })
+    const message = e instanceof Error ? e.message : "Static map failed."
+    const timedOut = signal.aborted
+    console.error(`${LOG_PREFIX} failed`, {
+      timedOut,
+      message,
+    })
+    return Response.json(
+      { error: timedOut ? "Static map request timed out. Please try again." : message },
+      { status: timedOut ? 504 : 500 }
+    )
   } finally {
+    clearTimeout(timeout)
     ac.abort()
   }
 }
