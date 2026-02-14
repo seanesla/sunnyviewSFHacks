@@ -7,16 +7,15 @@ import { QRCodeCanvas } from "qrcode.react"
 import { HeroSection } from "@/components/hero-section"
 import { GlobeStage } from "@/components/GlobeStage"
 import { MapInput, type MapInputResult } from "@/components/MapInput"
-import { StaticMapPhoto } from "@/components/StaticMapPhoto"
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking"
 import { packPanelsDeterministic } from "@/components/PanelPacking"
 import { RoofCanvas } from "@/components/RoofCanvas"
-import { MouseSpotlight } from "@/components/MouseSpotlight"
-import { AuroraBackground } from "@/components/AuroraBackground"
+import { BackgroundScene } from "@/components/BackgroundScene"
 import { AnimatedNumber } from "@/components/AnimatedNumber"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { apiOrigin, apiUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { toast } from "@/hooks/use-toast"
 
 type Phase = "landing" | "opening" | "app"
 
@@ -26,6 +25,23 @@ type Estimate = {
   annualCo2Kg: number
   source: "fallback" | "server"
   assumptions?: unknown
+}
+
+function dist2(a: Point, b: Point) {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return dx * dx + dy * dy
+}
+
+function centroid(points: Point[]) {
+  if (!points.length) return { x: 0, y: 0 }
+  let sx = 0
+  let sy = 0
+  for (const p of points) {
+    sx += p.x
+    sy += p.y
+  }
+  return { x: sx / points.length, y: sy / points.length }
 }
 
 function coerceNumber(v: unknown): number | null {
@@ -60,9 +76,108 @@ function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
   return pts
 }
 
+function unwrapGeoPolygon(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data
+  const t = (data as any).type
+  const coords = (data as any).coordinates
+  if (t === "Polygon" && Array.isArray(coords) && Array.isArray(coords[0])) return coords[0]
+  if (t === "MultiPolygon" && Array.isArray(coords) && Array.isArray(coords[0]) && Array.isArray(coords[0][0])) {
+    return coords[0][0]
+  }
+  return data
+}
+
+function cross(o: Point, a: Point, b: Point) {
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+}
+
+function convexHull(points: Point[]) {
+  const pts = points
+    .slice()
+    .sort((p, q) => (p.x === q.x ? p.y - q.y : p.x - q.x))
+  if (pts.length <= 1) return pts
+
+  const lower: Point[] = []
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop()
+    lower.push(p)
+  }
+
+  const upper: Point[] = []
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i]
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop()
+    upper.push(p)
+  }
+
+  upper.pop()
+  lower.pop()
+  return lower.concat(upper)
+}
+
+function rotate(p: Point, angleRad: number): Point {
+  const c = Math.cos(angleRad)
+  const s = Math.sin(angleRad)
+  return { x: p.x * c - p.y * s, y: p.x * s + p.y * c }
+}
+
+function normalizeDeg180(deg: number) {
+  let d = ((deg % 180) + 180) % 180 // [0, 180)
+  if (d > 90) d -= 180
+  return d
+}
+
+function minimumAreaBoundingRect(points: Point[]) {
+  if (points.length < 3) return null
+  const hull = convexHull(points)
+  if (hull.length < 3) return null
+
+  let bestArea = Infinity
+  let bestAngle = 0
+  let best: { minX: number; maxX: number; minY: number; maxY: number } | null = null
+
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i]
+    const b = hull[(i + 1) % hull.length]
+    const angle = Math.atan2(b.y - a.y, b.x - a.x)
+    const rotAngle = -angle
+
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const p of hull) {
+      const r = rotate(p, rotAngle)
+      minX = Math.min(minX, r.x)
+      minY = Math.min(minY, r.y)
+      maxX = Math.max(maxX, r.x)
+      maxY = Math.max(maxY, r.y)
+    }
+
+    const area = (maxX - minX) * (maxY - minY)
+    if (area < bestArea) {
+      bestArea = area
+      bestAngle = angle
+      best = { minX, maxX, minY, maxY }
+    }
+  }
+
+  if (!best) return null
+
+  const rectRot: Point[] = [
+    { x: best.minX, y: best.minY },
+    { x: best.maxX, y: best.minY },
+    { x: best.maxX, y: best.maxY },
+    { x: best.minX, y: best.maxY },
+  ]
+  const rect = rectRot.map((p) => rotate(p, bestAngle))
+  return { rect, angleDeg: (bestAngle * 180) / Math.PI }
+}
+
 export function SunnyviewExperience() {
   const hasBackend = apiOrigin().length > 0
   const isMobile = useIsMobile()
+  const ADDRESS_IMAGE_SCALE = 2
   const [phase, setPhase] = useState<Phase>("landing")
   const [entered, setEntered] = useState(false)
   const opened = phase !== "landing"
@@ -215,16 +330,33 @@ export function SunnyviewExperience() {
     if (mapInput.kind === "image" && mapInput.image) {
       return {
         kind: "image" as const,
-        dataUrl: mapInput.image.dataUrl,
+        src: mapInput.image.dataUrl,
         widthPx: mapInput.image.widthPx,
         heightPx: mapInput.image.heightPx,
       }
     }
     if (mapInput.kind === "address" && lat !== null && lng !== null) {
-      return { kind: "osm" as const, lat, lng, zoom }
+      const w = 520
+      const h = 360
+      const scale = ADDRESS_IMAGE_SCALE
+      const qs = new URLSearchParams()
+      qs.set("lat", String(lat))
+      qs.set("lng", String(lng))
+      qs.set("zoom", String(zoom))
+      qs.set("w", String(w))
+      qs.set("h", String(h))
+      qs.set("scale", String(scale))
+      return {
+        kind: "image" as const,
+        src: `/api/static-map?${qs.toString()}`,
+        widthPx: w * scale,
+        heightPx: h * scale,
+      }
     }
     return { kind: "none" as const }
   }, [lat, lng, mapInput.kind, mapInput.image, zoom])
+
+  const backgroundSrc = background.kind === "image" ? background.src : null
 
   const [projectId, setProjectId] = useState<string | null>(null)
   const [shareSlug, setShareSlug] = useState<string | null>(null)
@@ -326,6 +458,13 @@ export function SunnyviewExperience() {
   const [explainText, setExplainText] = useState<{ bullets: string[]; caveat: string } | null>(null)
   const [ttsLoading, setTtsLoading] = useState(false)
 
+  const [autoOutlineBusy, setAutoOutlineBusy] = useState(false)
+  const [autoOutlineError, setAutoOutlineError] = useState<string | null>(null)
+  const [autoOutlineHint, setAutoOutlineHint] = useState<string | null>(null)
+  const autoOutlineAbortRef = useRef<AbortController | null>(null)
+  const lastAutoOutlineKeyRef = useRef<string | null>(null)
+  const [autoOutlineCandidates, setAutoOutlineCandidates] = useState<Array<{ id: string; polygon: Point[]; score?: number }> | null>(null)
+
   async function runExplain() {
     setExplainLoading(true)
     try {
@@ -389,35 +528,158 @@ export function SunnyviewExperience() {
     }
   }
 
-  async function runAutoOutline() {
-    if (mapInput.kind !== "image" || !mapInput.image?.dataUrl) return
+  async function runAutoOutline(opts?: { imageUrl?: string }) {
     try {
+      if (background.kind !== "image") return
+
+      setAutoOutlineError(null)
+      setAutoOutlineHint(null)
+      setAutoOutlineBusy(true)
+      setAutoOutlineCandidates(null)
+
+      autoOutlineAbortRef.current?.abort()
+      const ac = new AbortController()
+      autoOutlineAbortRef.current = ac
+
+      const payload =
+        mapInput.kind === "image" && mapInput.image?.dataUrl
+          ? { imageDataUrl: mapInput.image.dataUrl }
+          : { imageUrl: opts?.imageUrl ?? background.src }
+
+      // Encourage the segmenter to pick the roof at the map center (address-selected house).
+      const cxPx = background.widthPx / 2
+      const cyPx = background.heightPx / 2
+      const clicks = [
+        { x: cxPx, y: cyPx, type: "pos" as const },
+        { x: cxPx + 14, y: cyPx, type: "pos" as const },
+        { x: cxPx, y: cyPx + 14, type: "pos" as const },
+      ]
+      const roiSize = Math.round(Math.min(background.widthPx, background.heightPx) * 0.55)
+      const roi = {
+        x: Math.max(0, Math.round(cxPx - roiSize / 2)),
+        y: Math.max(0, Math.round(cyPx - roiSize / 2)),
+        w: roiSize,
+        h: roiSize,
+      }
+
       const res = await fetch(apiUrl("/api/segment"), {
         method: "POST",
         headers: { "content-type": "application/json" },
+        signal: ac.signal,
         body: JSON.stringify({
-          imageDataUrl: mapInput.image.dataUrl,
+          ...payload,
           mode: "roof",
+          clicks,
+          roi,
+          meta:
+            mapInput.kind === "address"
+              ? {
+                  lat,
+                  lng,
+                  zoom,
+                  address: mapInput.address,
+                  widthPx: background.widthPx,
+                  heightPx: background.heightPx,
+                  staticMap: { w: 520, h: 360, scale: 2 },
+                }
+              : undefined,
         }),
       })
-      if (!res.ok) return
+
       const data = (await res.json().catch(() => null)) as any
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string"
+            ? data.error
+            : typeof data?.message === "string"
+              ? data.message
+              : `Auto-outline failed (HTTP ${res.status})`
+        setAutoOutlineError(msg)
+        setAutoOutlineHint(null)
+        toast({ title: "Auto-outline failed", description: msg, variant: "destructive" })
+        return
+      }
+
+      const w = background.widthPx
+      const h = background.heightPx
+
+      if (Array.isArray(data?.candidates)) {
+        const parsedCandidates: Array<{ id: string; polygon: Point[]; score?: number }> = []
+        for (const c of data.candidates as any[]) {
+          const id = typeof c?.id === "string" ? c.id : null
+          const polyRaw = c?.polygon ?? c?.roofPolygon ?? c?.poly
+          if (!id || !polyRaw) continue
+          const pts = normalizePolygon(unwrapGeoPolygon(polyRaw), w, h)
+          if (!pts) continue
+          parsedCandidates.push({ id, polygon: pts, score: typeof c?.score === "number" ? c.score : undefined })
+        }
+        if (parsedCandidates.length) {
+          setAutoOutlineCandidates(parsedCandidates)
+          setAutoOutlineHint("Click the correct roof")
+          setAutoOutlineError(null)
+          toast({ title: "Pick the correct roof", description: "Multiple nearby buildings matched this address. Click the correct roof outline." })
+          return
+        }
+      }
+
       const polyRaw =
         data?.roofPolygon ??
         data?.polygon ??
         data?.usablePolygon ??
+        data?.roofPolygons ??
+        data?.polygons ??
         data?.result?.roofPolygon ??
-        data?.result?.polygon
-      const w = mapInput.image.widthPx
-      const h = mapInput.image.heightPx
-      const poly = normalizePolygon(polyRaw, w, h)
+        data?.result?.polygon ??
+        data?.result?.roofPolygons ??
+        data?.result?.polygons
+
+      const focus = { x: cxPx, y: cyPx }
+
+      let poly: Point[] | null = null
+      if (Array.isArray(polyRaw) && polyRaw.length > 0 && Array.isArray(polyRaw[0]) && Array.isArray((polyRaw as any)[0][0])) {
+        // array-of-polygons
+        let best: { poly: Point[]; d2: number } | null = null
+        for (const cand of polyRaw as any[]) {
+          const candPoly = normalizePolygon(unwrapGeoPolygon(cand), w, h)
+          if (!candPoly) continue
+          const c = centroid(candPoly)
+          const d2 = dist2(c, focus)
+          if (!best || d2 < best.d2) best = { poly: candPoly, d2 }
+        }
+        poly = best?.poly ?? null
+      } else {
+        poly = normalizePolygon(unwrapGeoPolygon(polyRaw), w, h)
+      }
+
       if (!poly) return
+
+      const rectFit = minimumAreaBoundingRect(poly)
       setVertices(poly)
       setClosed(true)
+      if (rectFit) setOrientationDeg(normalizeDeg180(rectFit.angleDeg))
     } catch {
       // ignore
+    } finally {
+      setAutoOutlineBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (!panelsMounted) return
+    if (mapInput.kind !== "address") return
+    if (background.kind !== "image") return
+    if (mapInput.lat === null || mapInput.lng === null) return
+
+    const key = backgroundSrc
+    if (!key || key === lastAutoOutlineKeyRef.current) return
+    lastAutoOutlineKeyRef.current = key
+
+    // New address/image => clear previous roof and auto-detect.
+    setVertices([])
+    setClosed(false)
+    void runAutoOutline({ imageUrl: key })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [background.kind, backgroundSrc, mapInput.kind, mapInput.lat, mapInput.lng, panelsMounted])
 
   const shareUrl = useMemo(() => {
     if (!shareSlug) return null
@@ -494,24 +756,35 @@ export function SunnyviewExperience() {
         panels={panels}
         onVerticesChange={(v) => {
           setVertices(v)
+          setAutoOutlineCandidates(null)
+          setAutoOutlineError(null)
+          setAutoOutlineHint(null)
           if (v.length < 3) setClosed(false)
         }}
         onClosedChange={setClosed}
-        onAutoOutline={runAutoOutline}
+        onAutoOutline={background.kind === "image" ? () => void runAutoOutline() : undefined}
+        autoOutlineBusy={autoOutlineBusy}
+        autoOutlineError={autoOutlineError}
+        autoOutlineHint={autoOutlineHint}
+        candidatePolygons={autoOutlineCandidates}
+        onPickCandidate={(id) => {
+          const hit = autoOutlineCandidates?.find((c) => c.id === id) ?? null
+          if (!hit) return
+          const rectFit = minimumAreaBoundingRect(hit.polygon)
+          setVertices(hit.polygon)
+          setClosed(true)
+          if (rectFit) setOrientationDeg(normalizeDeg180(rectFit.angleDeg))
+          setAutoOutlineCandidates(null)
+          setAutoOutlineError(null)
+          setAutoOutlineHint(null)
+        }}
+        centerPin={mapInput.kind === "address" && background.kind === "image" ? { x: background.widthPx / 2, y: background.heightPx / 2 } : null}
       />
     </div>
   )
 
   const rightPanel = (
     <div className="space-y-4">
-      <StaticMapPhoto
-        className="glass-card p-4"
-        address={mapInput.kind === "address" ? mapInput.address : null}
-        lat={lat}
-        lng={lng}
-        zoom={zoom}
-      />
-
       <div className="glass-card p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-foreground">Results</div>
@@ -645,9 +918,8 @@ export function SunnyviewExperience() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background">
-      <AuroraBackground />
+      <BackgroundScene />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,20,0.10)_0%,rgba(3,8,20,0.14)_42%,rgba(3,8,20,0.28)_100%)]" />
-      <MouseSpotlight />
 
       <GlobeStage
         lat={lat}
@@ -678,6 +950,10 @@ export function SunnyviewExperience() {
 
       <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
         <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary/45 bg-primary/12 px-3 py-1.5 shadow-[0_10px_30px_-22px_rgba(0,0,0,0.95)]">
+            <span className="text-[10px] font-semibold tracking-[0.24em] text-foreground uppercase">Sunnywise</span>
+          </div>
+
           {phase === "app" && (
             <button
               type="button"

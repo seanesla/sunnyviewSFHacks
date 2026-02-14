@@ -115,13 +115,15 @@ export async function GET(req: NextRequest) {
     lat = clamp(lat, -85.05112878, 85.05112878)
     lng = clamp(lng, -180, 180)
 
+    // `scale` is treated like device-pixel-ratio: increase output resolution
+    // without changing the geographic bbox.
     const outW = clamp(w * scale, 64, 2048)
     const outH = clamp(h * scale, 64, 2048)
 
     const { x, y } = mercatorProject(lat, lng)
     const resMPerPx = mercatorResolutionMetersPerPx(zoom)
-    const halfWm = (resMPerPx * outW) / 2
-    const halfHm = (resMPerPx * outH) / 2
+    const halfWm = (resMPerPx * w) / 2
+    const halfHm = (resMPerPx * h) / 2
     const bbox = `${(x - halfWm).toFixed(6)},${(y - halfHm).toFixed(6)},${(x + halfWm).toFixed(6)},${(y + halfHm).toFixed(6)}`
 
     // No API key required for this public export endpoint (good for demos).
