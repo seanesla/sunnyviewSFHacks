@@ -17,9 +17,11 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
 
   useEffect(() => {
     if (!visible) {
-      setShowAccentPicker(false)
-      setShowLogoHint(false)
-      return
+      const resetTimer = window.setTimeout(() => {
+        setShowAccentPicker(false)
+        setShowLogoHint(false)
+      }, 0)
+      return () => window.clearTimeout(resetTimer)
     }
 
     const hintSeenKey = "sunnyview-logo-accent-hint-v1"
