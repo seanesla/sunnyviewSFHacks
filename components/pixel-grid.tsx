@@ -29,7 +29,9 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
   const { hue } = useAccent()
   const animRef = useRef<number>(0)
 
-  hueRef.current = hue
+  useEffect(() => {
+    hueRef.current = hue
+  }, [hue])
 
   const densityScale = clamp(density, 0.7, 1.4)
   const intensityScale = clamp(intensity, 0.65, 1.35)

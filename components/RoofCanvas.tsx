@@ -5,7 +5,7 @@ import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking"
 
 type BackgroundSpec =
   | { kind: "none" }
-  | { kind: "image"; dataUrl: string; widthPx: number; heightPx: number }
+  | { kind: "image"; src: string; widthPx: number; heightPx: number }
   | { kind: "osm"; lat: number; lng: number; zoom: number }
 
 function clamp(n: number, min: number, max: number) {
@@ -38,6 +38,19 @@ function nearestVertexIdx(p: Point, vertices: Point[], radius: number) {
   return bestIdx
 }
 
+function pointInPolygon(p: Point, polygon: Point[]) {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x
+    const yi = polygon[i].y
+    const xj = polygon[j].x
+    const yj = polygon[j].y
+    const intersects = yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi
+    if (intersects) inside = !inside
+  }
+  return inside
+}
+
 export function RoofCanvas({
   background,
   mPerPx,
@@ -50,6 +63,12 @@ export function RoofCanvas({
   onVerticesChange,
   onClosedChange,
   onAutoOutline,
+  autoOutlineBusy = false,
+  autoOutlineError = null,
+  autoOutlineHint = null,
+  candidatePolygons = null,
+  onPickCandidate,
+  centerPin = null,
 }: {
   background: BackgroundSpec
   mPerPx: number | null
@@ -62,13 +81,25 @@ export function RoofCanvas({
   onVerticesChange?: (next: Point[]) => void
   onClosedChange?: (next: boolean) => void
   onAutoOutline?: () => void
+  autoOutlineBusy?: boolean
+  autoOutlineError?: string | null
+  autoOutlineHint?: string | null
+  candidatePolygons?: Array<{ id: string; polygon: Point[]; score?: number }> | null
+  onPickCandidate?: (id: string) => void
+  centerPin?: Point | null
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
+  const drawRef = useRef<() => void>(() => {})
   const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+
+  const [tool, setTool] = useState<"polygon" | "rectangle">("polygon")
+  const [rectStart, setRectStart] = useState<Point | null>(null)
+  const [rectEnd, setRectEnd] = useState<Point | null>(null)
+  const [drawingRect, setDrawingRect] = useState(false)
 
   const internalSize = useMemo(() => {
     if (background.kind === "image") return { w: background.widthPx, h: background.heightPx }
@@ -161,7 +192,7 @@ export function RoofCanvas({
             img = new Image()
             img.crossOrigin = "anonymous"
             img.src = `https://tile.openstreetmap.org/${z}/${wrappedX}/${clampedY}.png`
-            img.onload = () => draw()
+            img.onload = () => drawRef.current()
             tileCacheRef.current.set(key, img)
           }
 
@@ -256,10 +287,34 @@ export function RoofCanvas({
       ctx.font = "14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto"
       ctx.textAlign = "center"
       ctx.fillText(
-        "Click to trace the usable roof area. Double-click (or press Finish) to close.",
+        tool === "rectangle"
+          ? "Drag to draw a rectangle that bounds the usable roof area."
+          : "Click to trace the usable roof area. Double-click (or press Finish) to close.",
         internalSize.w / 2,
         internalSize.h / 2
       )
+    }
+
+    // Rectangle draft (before commit)
+    if (mode === "edit" && tool === "rectangle" && rectStart && rectEnd) {
+      const minX = Math.min(rectStart.x, rectEnd.x)
+      const minY = Math.min(rectStart.y, rectEnd.y)
+      const maxX = Math.max(rectStart.x, rectEnd.x)
+      const maxY = Math.max(rectStart.y, rectEnd.y)
+      const w = Math.max(0, maxX - minX)
+      const h = Math.max(0, maxY - minY)
+
+      if (w > 1 && h > 1) {
+        ctx.save()
+        ctx.setLineDash([8, 6])
+        ctx.strokeStyle = "rgba(59, 130, 246, 0.95)"
+        ctx.lineWidth = 2
+        ctx.strokeRect(minX, minY, w, h)
+        ctx.restore()
+
+        ctx.fillStyle = "rgba(59, 130, 246, 0.08)"
+        ctx.fillRect(minX, minY, w, h)
+      }
     }
 
     // Orientation hint
@@ -280,6 +335,54 @@ export function RoofCanvas({
 
     ctx.restore()
 
+    // Center pin (address point)
+    if (centerPin) {
+      ctx.save()
+      ctx.strokeStyle = "rgba(255,255,255,0.85)"
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(centerPin.x - 10, centerPin.y)
+      ctx.lineTo(centerPin.x + 10, centerPin.y)
+      ctx.moveTo(centerPin.x, centerPin.y - 10)
+      ctx.lineTo(centerPin.x, centerPin.y + 10)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    // Candidate outlines (disambiguation)
+    if (mode === "edit" && candidatePolygons && candidatePolygons.length > 0) {
+      const colors = [
+        "rgba(34,197,94,0.95)",
+        "rgba(59,130,246,0.95)",
+        "rgba(245,158,11,0.95)",
+        "rgba(236,72,153,0.95)",
+        "rgba(168,85,247,0.95)",
+      ]
+      candidatePolygons.forEach((c, idx) => {
+        const poly = c.polygon
+        if (!poly || poly.length < 3) return
+        ctx.save()
+        ctx.beginPath()
+        ctx.moveTo(poly[0].x, poly[0].y)
+        for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y)
+        ctx.closePath()
+        ctx.strokeStyle = colors[idx % colors.length]
+        ctx.lineWidth = 2
+        ctx.stroke()
+        ctx.fillStyle = "rgba(0,0,0,0.16)"
+        ctx.fill()
+
+        // label near first vertex
+        const p0 = poly[0]
+        ctx.fillStyle = "rgba(0,0,0,0.65)"
+        ctx.fillRect(p0.x + 6, p0.y + 6, 86, 18)
+        ctx.fillStyle = "rgba(255,255,255,0.92)"
+        ctx.font = "11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto"
+        ctx.fillText(`Roof ${idx + 1}`, p0.x + 12, p0.y + 19)
+        ctx.restore()
+      })
+    }
+
     // Overlay pill
     ctx.fillStyle = "rgba(0,0,0,0.55)"
     ctx.fillRect(12, 12, 282, 54)
@@ -291,6 +394,36 @@ export function RoofCanvas({
     ctx.fillStyle = "rgba(255,255,255,0.65)"
     ctx.fillText(`Scale: ${mPerPx ? `${mPerPx.toExponential(2)} m/px` : "—"}`, 132, 32)
     ctx.fillText(`Orient: ${orientationDeg.toFixed(0)}°`, 132, 50)
+
+    if (mode === "edit" && background.kind === "image") {
+      const status = autoOutlineBusy
+        ? { title: "Detecting roof…", tone: "info" as const }
+        : autoOutlineError
+          ? { title: "Auto-outline failed", tone: "error" as const, detail: autoOutlineError }
+          : autoOutlineHint
+            ? { title: autoOutlineHint, tone: "hint" as const }
+            : null
+      if (status) {
+        ctx.fillStyle = "rgba(0,0,0,0.55)"
+        const h = status.tone === "error" && status.detail ? 46 : 28
+        ctx.fillRect(12, 74, 282, h)
+        ctx.fillStyle =
+          status.tone === "error"
+            ? "rgba(248,113,113,0.95)"
+            : status.tone === "hint"
+              ? "rgba(245,158,11,0.95)"
+              : "rgba(255,255,255,0.9)"
+        ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto"
+        ctx.fillText(status.title, 22, 93)
+
+        if (status.tone === "error" && status.detail) {
+          const msg = String(status.detail)
+          const clipped = msg.length > 44 ? `${msg.slice(0, 41)}…` : msg
+          ctx.fillStyle = "rgba(255,255,255,0.75)"
+          ctx.fillText(clipped, 22, 111)
+        }
+      }
+    }
   }, [
     background,
     closed,
@@ -303,7 +436,19 @@ export function RoofCanvas({
     panels,
     vertices,
     mode,
-  ])
+    rectEnd,
+    rectStart,
+    tool,
+    autoOutlineBusy,
+    autoOutlineError,
+    autoOutlineHint,
+    candidatePolygons,
+    centerPin,
+    ])
+
+  useEffect(() => {
+    drawRef.current = draw
+  }, [draw])
 
   useEffect(() => {
     if (background.kind !== "image") {
@@ -315,8 +460,8 @@ export function RoofCanvas({
       imgRef.current = img
       draw()
     }
-    img.src = background.dataUrl
-  }, [background.kind, background.kind === "image" ? background.dataUrl : null, draw])
+    img.src = background.src
+  }, [background.kind, background.kind === "image" ? background.src : null, draw])
 
   useEffect(() => {
     draw()
@@ -340,6 +485,24 @@ export function RoofCanvas({
       const rect = container.getBoundingClientRect()
       const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
 
+      if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
+        for (const c of candidatePolygons) {
+          if (pointInPolygon(internal, c.polygon)) {
+            onPickCandidate(c.id)
+            return
+          }
+        }
+      }
+
+      if (tool === "rectangle") {
+        setDrawingRect(true)
+        setRectStart({ x: internal.x, y: internal.y })
+        setRectEnd({ x: internal.x, y: internal.y })
+        onVerticesChange?.([])
+        onClosedChange?.(false)
+        return
+      }
+
       if (closed) {
         const idx = nearestVertexIdx(internal, vertices, 12 / internal.scale)
         if (idx !== null) setDraggingIdx(idx)
@@ -348,7 +511,7 @@ export function RoofCanvas({
 
       onVerticesChange?.([...vertices, { x: internal.x, y: internal.y }])
     },
-    [closed, mode, onVerticesChange, toInternal, vertices]
+    [candidatePolygons, closed, mode, onClosedChange, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
   )
 
   const onPointerMove = useCallback(
@@ -366,22 +529,50 @@ export function RoofCanvas({
       }
 
       if (mode !== "edit") return
+
+      if (tool === "rectangle" && drawingRect) {
+        setRectEnd({ x: internal.x, y: internal.y })
+        return
+      }
       if (draggingIdx === null) return
 
       const next = vertices.slice()
       next[draggingIdx] = { x: internal.x, y: internal.y }
       onVerticesChange?.(next)
     },
-    [closed, draggingIdx, mode, onVerticesChange, toInternal, vertices]
+    [closed, draggingIdx, drawingRect, mode, onVerticesChange, toInternal, tool, vertices]
   )
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
       const canvas = canvasRef.current
       if (canvas) canvas.releasePointerCapture(e.pointerId)
+
+      if (mode === "edit" && tool === "rectangle" && drawingRect && rectStart && rectEnd) {
+        const minX = Math.min(rectStart.x, rectEnd.x)
+        const minY = Math.min(rectStart.y, rectEnd.y)
+        const maxX = Math.max(rectStart.x, rectEnd.x)
+        const maxY = Math.max(rectStart.y, rectEnd.y)
+
+        const w = maxX - minX
+        const h = maxY - minY
+        if (w >= 3 && h >= 3) {
+          onVerticesChange?.([
+            { x: minX, y: minY },
+            { x: maxX, y: minY },
+            { x: maxX, y: maxY },
+            { x: minX, y: maxY },
+          ])
+          onClosedChange?.(true)
+        }
+      }
+
+      setDrawingRect(false)
+      setRectStart(null)
+      setRectEnd(null)
       setDraggingIdx(null)
     },
-    []
+    [drawingRect, mode, onClosedChange, onVerticesChange, rectEnd, rectStart, tool]
   )
 
   const onDoubleClick = useCallback(() => {
@@ -397,21 +588,38 @@ export function RoofCanvas({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-xs text-muted-foreground">
             {background.kind === "image"
-              ? "Image mode: trace on your screenshot."
+              ? "Satellite image: trace the usable roof area."
               : background.kind === "osm"
-                ? "Link mode: OSM background (no satellite)."
+                ? "Map mode: OSM background."
                 : "Trace the usable roof polygon."}
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                tool === "rectangle" ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              }`}
+              onClick={() => {
+                setTool((t) => (t === "rectangle" ? "polygon" : "rectangle"))
+                setRectStart(null)
+                setRectEnd(null)
+                setDrawingRect(false)
+                onVerticesChange?.([])
+                onClosedChange?.(false)
+              }}
+              title={tool === "rectangle" ? "Switch back to polygon trace" : "Draw a roof rectangle"}
+            >
+              {tool === "rectangle" ? "Rectangle: On" : "Rectangle"}
+            </button>
             {onAutoOutline && (
               <button
                 type="button"
                 className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
                 onClick={onAutoOutline}
-                disabled={background.kind !== "image"}
+                disabled={background.kind !== "image" || autoOutlineBusy}
                 title={background.kind !== "image" ? "Auto-outline requires a screenshot upload." : "Auto-outline"}
               >
-                Auto-outline
+                {autoOutlineBusy ? "Auto-outlining…" : "Auto-outline"}
               </button>
             )}
             {!closed && (
@@ -419,7 +627,7 @@ export function RoofCanvas({
                 type="button"
                 className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
                 onClick={() => onClosedChange?.(true)}
-                disabled={vertices.length < 3}
+                disabled={tool === "rectangle" ? true : vertices.length < 3}
               >
                 Finish
               </button>
@@ -430,6 +638,9 @@ export function RoofCanvas({
               onClick={() => {
                 onVerticesChange?.([])
                 onClosedChange?.(false)
+                setRectStart(null)
+                setRectEnd(null)
+                setDrawingRect(false)
               }}
             >
               Clear

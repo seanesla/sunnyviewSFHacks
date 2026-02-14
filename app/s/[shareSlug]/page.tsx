@@ -111,7 +111,17 @@ export default function SharePage() {
 
   const background = useMemo(() => {
     if (snapshot?.geometry?.background === "address" && lat !== null && lng !== null) {
-      return { kind: "osm" as const, lat, lng, zoom }
+      const w = 520
+      const h = 360
+      const scale = 2
+      const qs = new URLSearchParams()
+      qs.set("lat", String(lat))
+      qs.set("lng", String(lng))
+      qs.set("zoom", String(zoom))
+      qs.set("w", String(w))
+      qs.set("h", String(h))
+      qs.set("scale", String(scale))
+      return { kind: "image" as const, src: `/api/static-map?${qs.toString()}`, widthPx: w * scale, heightPx: h * scale }
     }
     return { kind: "none" as const }
   }, [lat, lng, snapshot?.geometry?.background, zoom])

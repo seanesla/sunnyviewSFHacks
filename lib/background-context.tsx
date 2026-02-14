@@ -86,6 +86,7 @@ export function BackgroundProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = readStoredBackground()
     if (stored) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMode(stored.mode)
       setMotion(stored.motion)
       setIntensity(stored.intensity)
