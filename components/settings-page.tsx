@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowLeft,
   Check,
@@ -22,7 +22,8 @@ const AURORA_GRID_BACKGROUND = {
   description: "Landing uses Fusion, then dashboard transitions to Dark Grid.",
 };
 
-const SOFT_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const SOFT_EASE: [number, number, number, number] = [0.2, 0.9, 0.24, 1];
+const FADE_EASE: [number, number, number, number] = [0.33, 1, 0.68, 1];
 
 interface SettingsPageProps {
   embedded?: boolean;
@@ -30,6 +31,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
+  const prefersReducedMotion = useReducedMotion();
   const { hue, saturation } = useAccent();
   const {
     motion: backgroundMotion,
@@ -97,9 +99,25 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
     >
       <motion.header
         className="mb-6 flex items-center justify-between gap-3"
-        initial={{ opacity: 0, y: -14, filter: "blur(6px)" }}
-        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        transition={{ duration: 0.42, ease: SOFT_EASE }}
+        initial={
+          prefersReducedMotion
+            ? { opacity: 0 }
+            : { opacity: 0, y: -10, filter: "blur(4px)" }
+        }
+        animate={
+          prefersReducedMotion
+            ? { opacity: 1 }
+            : { opacity: 1, y: 0, filter: "blur(0px)" }
+        }
+        transition={
+          prefersReducedMotion
+            ? { duration: 0.14 }
+            : {
+                opacity: { duration: 0.2, ease: FADE_EASE },
+                y: { duration: 0.32, ease: SOFT_EASE },
+                filter: { duration: 0.2, ease: FADE_EASE },
+              }
+        }
       >
         {backButton}
         <div className="text-[11px] font-medium tracking-[0.18em] text-muted-foreground uppercase">
@@ -112,9 +130,26 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
           "glass-card gradient-border rounded-2xl p-6 sm:p-8",
           embedded && "max-h-[calc(100vh-8.5rem)] overflow-auto",
         )}
-        initial={{ opacity: 0, y: 18, filter: "blur(10px)" }}
-        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        transition={{ duration: 0.52, delay: 0.06, ease: SOFT_EASE }}
+        initial={
+          prefersReducedMotion
+            ? { opacity: 0 }
+            : { opacity: 0, y: 14, filter: "blur(8px)" }
+        }
+        animate={
+          prefersReducedMotion
+            ? { opacity: 1 }
+            : { opacity: 1, y: 0, filter: "blur(0px)" }
+        }
+        transition={
+          prefersReducedMotion
+            ? { duration: 0.14 }
+            : {
+                delay: 0.01,
+                opacity: { duration: 0.2, ease: FADE_EASE },
+                y: { duration: 0.32, ease: SOFT_EASE },
+                filter: { duration: 0.18, ease: FADE_EASE },
+              }
+        }
       >
         <div className="flex items-center gap-2 text-primary">
           <Palette size={16} />

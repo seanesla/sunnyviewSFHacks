@@ -8,6 +8,8 @@ type BackgroundSpec =
   | { kind: "image"; src: string; widthPx: number; heightPx: number }
   | { kind: "osm"; lat: number; lng: number; zoom: number }
 
+const MAX_TILE_CACHE_SIZE = 220
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
@@ -261,6 +263,10 @@ export function RoofCanvas({
             img.crossOrigin = "anonymous"
             img.src = `https://tile.openstreetmap.org/${z}/${wrappedX}/${clampedY}.png`
             img.onload = () => invalidateRef.current()
+            if (tileCacheRef.current.size >= MAX_TILE_CACHE_SIZE) {
+              const oldestKey = tileCacheRef.current.keys().next().value
+              if (oldestKey) tileCacheRef.current.delete(oldestKey)
+            }
             tileCacheRef.current.set(key, img)
           }
 
@@ -558,6 +564,12 @@ export function RoofCanvas({
       cancelled = true
     }
   }, [background.kind, imageSrc, invalidate])
+
+  useEffect(() => {
+    if (background.kind !== "osm") {
+      tileCacheRef.current.clear()
+    }
+  }, [background.kind])
 
   useEffect(() => {
     invalidate()

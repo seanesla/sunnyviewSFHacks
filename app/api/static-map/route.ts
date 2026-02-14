@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server"
+import { requestClientKey, takeRateLimitToken } from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 
+const ROUTE_TIMEOUT_MS = 12_000
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 45
 const LOG_PREFIX = "[static-map]"
 
 function clamp(n: number, min: number, max: number) {
@@ -192,6 +196,22 @@ function buildMapboxStaticUrl(params: {
 }
 
 export async function GET(req: NextRequest) {
+  const clientKey = requestClientKey(req.headers)
+  const rate = takeRateLimitToken({
+    key: `static-map:${clientKey}`,
+    limit: RATE_LIMIT_MAX,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+  })
+  if (!rate.ok) {
+    return Response.json(
+      { error: "Too many static-map requests. Please slow down." },
+      {
+        status: 429,
+        headers: { "retry-after": String(rate.retryAfterSec) },
+      }
+    )
+  }
+
   const { searchParams } = new URL(req.url)
 
   const address = (searchParams.get("address") ?? "").trim()
@@ -203,10 +223,9 @@ export async function GET(req: NextRequest) {
   const h = clamp(Math.round(parseNum(searchParams.get("h")) ?? 360), 64, 2048)
   const scale = clamp(Math.round(parseNum(searchParams.get("scale")) ?? 2), 1, 2)
 
-  const timeoutMs = 12000
   const ac = new AbortController()
   const signal = ac.signal
-  const timeout = setTimeout(() => ac.abort(), timeoutMs)
+  const timeout = setTimeout(() => ac.abort(), ROUTE_TIMEOUT_MS)
 
   let lat = latParam
   let lng = lngParam

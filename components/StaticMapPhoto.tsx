@@ -25,7 +25,7 @@ function StaticMapImage({ src, alt }: StaticMapImageProps) {
   if (failed) {
     return (
       <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-destructive">
-        Failed to load satellite photo. Check your connection and try again.
+        Failed to load satellite photo. Check your connection or the static-map backend route.
       </div>
     )
   }

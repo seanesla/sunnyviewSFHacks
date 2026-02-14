@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server"
+import { requestClientKey, takeRateLimitToken } from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -293,11 +294,24 @@ async function fetchNominatim({
 
 type CacheEntry = { t: number; payload: { results: GeocodeResult[]; warning: string | null } }
 const CACHE_TTL_MS = 30_000
+const CACHE_MAX_ENTRIES = 300
+const ROUTE_TIMEOUT_MS = 11_000
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 90
 
 function cacheMap() {
   const g = globalThis as unknown as { __sunnyviewGeocodeCache?: Map<string, CacheEntry> }
   if (!g.__sunnyviewGeocodeCache) g.__sunnyviewGeocodeCache = new Map()
   return g.__sunnyviewGeocodeCache
+}
+
+function cacheSet(key: string, payload: { results: GeocodeResult[]; warning: string | null }) {
+  const map = cacheMap()
+  map.set(key, { t: Date.now(), payload })
+  if (map.size > CACHE_MAX_ENTRIES) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey) map.delete(oldestKey)
+  }
 }
 
 function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -313,6 +327,22 @@ function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: num
 }
 
 export async function GET(req: NextRequest) {
+  const clientKey = requestClientKey(req.headers)
+  const rate = takeRateLimitToken({
+    key: `geocode:${clientKey}`,
+    limit: RATE_LIMIT_MAX,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+  })
+  if (!rate.ok) {
+    return Response.json(
+      { error: "Too many geocode requests. Please slow down." },
+      {
+        status: 429,
+        headers: { "retry-after": String(rate.retryAfterSec) },
+      }
+    )
+  }
+
   const { searchParams } = new URL(req.url)
   const mode = (searchParams.get("mode") ?? "lookup").trim()
 
@@ -327,6 +357,7 @@ export async function GET(req: NextRequest) {
 
   const ac = new AbortController()
   const signal = ac.signal
+  const timeoutId = setTimeout(() => ac.abort(), ROUTE_TIMEOUT_MS)
 
   try {
     const biasKey =
@@ -359,7 +390,7 @@ export async function GET(req: NextRequest) {
         .filter(Boolean) as GeocodeResult[]
 
       const payload = { results, warning: null }
-      cacheMap().set(cacheKey, { t: Date.now(), payload })
+      cacheSet(cacheKey, payload)
       return Response.json(payload, { status: 200 })
     }
 
@@ -397,7 +428,7 @@ export async function GET(req: NextRequest) {
         ],
         warning: null,
       }
-      cacheMap().set(cacheKey, { t: Date.now(), payload })
+      cacheSet(cacheKey, payload)
       return Response.json(payload, { status: 200 })
     }
 
@@ -496,21 +527,25 @@ export async function GET(req: NextRequest) {
         : null
 
     const payload = { results, warning }
-    cacheMap().set(cacheKey, { t: Date.now(), payload })
+    cacheSet(cacheKey, payload)
     return Response.json(payload, { status: 200 })
   } catch (e) {
     // Upstream providers (Esri / Nominatim) can rate-limit or transiently fail.
     // Return a non-fatal payload so the UI can prompt the user to retry.
     const msg = e instanceof Error ? e.message : "Geocoding failed."
+    const warning = signal.aborted
+      ? "Geocoding timed out. Please try again."
+      : "Geocoding is temporarily unavailable. Please try again in a moment."
     return Response.json(
       {
         results: [],
-        warning: "Geocoding is temporarily unavailable. Please try again in a moment.",
+        warning,
         error: msg,
       },
       { status: 200 }
     )
   } finally {
+    clearTimeout(timeoutId)
     ac.abort()
   }
 }

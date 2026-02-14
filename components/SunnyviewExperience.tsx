@@ -31,6 +31,11 @@ type Estimate = {
   assumptions?: unknown;
 };
 
+type CandidatePolygon = {
+  id: string;
+  polygon: Point[];
+  score?: number;
+};
 
 function coerceNumber(v: unknown): number | null {
   const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
@@ -626,9 +631,11 @@ export function SunnyviewExperience() {
     if (!panelsMounted) return;
     const hasSite = Number.isFinite(lat ?? NaN) && Number.isFinite(lng ?? NaN);
     if (!hasSite || dcKw <= 0) return;
+    let localAbort: AbortController | null = null;
     const t = window.setTimeout(async () => {
       estimateAbortRef.current?.abort();
       const ac = new AbortController();
+      localAbort = ac;
       estimateAbortRef.current = ac;
       try {
         const res = await fetch(apiUrl("/api/estimate"), {
@@ -667,7 +674,10 @@ export function SunnyviewExperience() {
         // keep fallback
       }
     }, 320);
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(t);
+      localAbort?.abort();
+    };
   }, [
     panelsMounted,
     lat,
@@ -707,9 +717,18 @@ export function SunnyviewExperience() {
   const creatingProjectRef = useRef(false);
   const projectCreateFailedRef = useRef(false);
 
+  useEffect(() => {
+    if (mapInput.kind === "image") return;
+    setCandidatePolygons(null);
+    setAutoOutlineBusy(false);
+    setAutoOutlineError(null);
+    setAutoOutlineHint(null);
+  }, [mapInput.kind]);
+
   function returnToLanding() {
     setShowShare(false);
     setSettingsOpen(false);
+    setActionNotice(null);
     setPhase("landing");
   }
 
@@ -753,6 +772,9 @@ export function SunnyviewExperience() {
         if (slug) setShareSlug(slug);
       } catch {
         projectCreateFailedRef.current = true;
+        setActionNotice(
+          "Could not connect to project backend. Sharing is currently unavailable.",
+        );
         // ignore
       } finally {
         creatingProjectRef.current = false;
@@ -831,11 +853,13 @@ export function SunnyviewExperience() {
     caveat: string;
   } | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const sceneMode = opened ? "grid" : "fusion";
 
   async function runExplain() {
     setExplainLoading(true);
+    setActionNotice(null);
     try {
       const res = await fetch(apiUrl("/api/explain"), {
         method: "POST",
@@ -852,11 +876,20 @@ export function SunnyviewExperience() {
         }),
       });
       const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Explain failed (${res.status})`,
+        );
+      }
       const bullets = Array.isArray(data?.bullets)
         ? data.bullets.map((b: any) => String(b))
         : null;
       const caveat = data?.caveat
         ? String(data.caveat)
+        : Array.isArray(data?.caveats) && data.caveats.length
+          ? String(data.caveats[0])
         : "Solar output is an estimate; shading, tilt, and local conditions can change results.";
       if (bullets && bullets.length) {
         setExplainText({ bullets: bullets.slice(0, 3), caveat });
@@ -890,6 +923,7 @@ export function SunnyviewExperience() {
       explainText?.bullets?.join(" ") ??
       `This layout fits ${panelCount} panels (${dcKw.toFixed(1)} kilowatts DC) and produces about ${Math.round(estimate.annualKwh).toLocaleString()} kilowatt-hours per year.`;
     setTtsLoading(true);
+    setActionNotice(null);
     try {
       const res = await fetch(apiUrl("/api/tts"), {
         method: "POST",
@@ -897,13 +931,31 @@ export function SunnyviewExperience() {
         body: JSON.stringify({ text }),
       });
       const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Text-to-speech failed (${res.status})`,
+        );
+      }
       const audioUrl =
         typeof data?.audioUrl === "string" ? data.audioUrl : null;
-      if (!audioUrl) return;
+      if (!audioUrl) {
+        setActionNotice(
+          typeof data?.note === "string"
+            ? data.note
+            : "Text-to-speech is not available right now.",
+        );
+        return;
+      }
       const audio = new Audio(audioUrl);
       await audio.play();
-    } catch {
-      // ignore
+    } catch (e) {
+      setActionNotice(
+        e instanceof Error
+          ? e.message
+          : "Text-to-speech is not available right now.",
+      );
     } finally {
       setTtsLoading(false);
     }
@@ -1148,6 +1200,12 @@ export function SunnyviewExperience() {
     return `${window.location.origin}/s/${shareSlug}`;
   }, [shareSlug]);
 
+  const shareDisabledReason = !hasBackend
+    ? "Sharing requires an external backend (/api/projects and /s/:shareSlug)."
+    : !shareSlug
+      ? "Create a project to enable sharing."
+      : null;
+
   const leftPanel = (
     <div className="space-y-4">
       <MapInput value={mapInput} onChange={setMapInput} />
@@ -1223,6 +1281,11 @@ export function SunnyviewExperience() {
           setAutoOutlineError(null);
           setAutoOutlineHint(null);
           if (v.length < 3) setClosed(false);
+          if (v.length === 0) {
+            setCandidatePolygons(null);
+            setAutoOutlineHint(null);
+            setAutoOutlineError(null);
+          }
         }}
         onClosedChange={setClosed}
         onAutoOutline={() => runAutoOutline({ reason: "manual" })}
@@ -1371,12 +1434,18 @@ export function SunnyviewExperience() {
             type="button"
             className="rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 disabled:opacity-50"
             onClick={() => setShowShare((s) => !s)}
-            disabled={!shareSlug}
-            title={!shareSlug ? "Create a project to enable sharing." : "Share"}
+            disabled={shareDisabledReason !== null}
+            title={shareDisabledReason ?? "Share"}
           >
             Share
           </button>
         </div>
+
+        {(actionNotice || shareDisabledReason) && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            {actionNotice ?? shareDisabledReason}
+          </div>
+        )}
 
         {explainText && (
           <div className="glass-surface mt-3 rounded-lg p-3 text-sm text-foreground">
@@ -1557,7 +1626,7 @@ export function SunnyviewExperience() {
 
       {startupDone && !settingsOpen && (
         <div className="pointer-events-none relative z-20 h-full px-2 py-6 sm:px-3 sm:py-8 lg:px-4">
-          {!isMobile ? (
+          {isMobile === null ? null : !isMobile ? (
             <div
               className={cn(
                 "grid h-full min-h-0 grid-cols-1 gap-6",
