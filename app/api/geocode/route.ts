@@ -499,7 +499,17 @@ export async function GET(req: NextRequest) {
     cacheMap().set(cacheKey, { t: Date.now(), payload })
     return Response.json(payload, { status: 200 })
   } catch (e) {
-    return Response.json({ error: e instanceof Error ? e.message : "Geocoding failed." }, { status: 500 })
+    // Upstream providers (Esri / Nominatim) can rate-limit or transiently fail.
+    // Return a non-fatal payload so the UI can prompt the user to retry.
+    const msg = e instanceof Error ? e.message : "Geocoding failed."
+    return Response.json(
+      {
+        results: [],
+        warning: "Geocoding is temporarily unavailable. Please try again in a moment.",
+        error: msg,
+      },
+      { status: 200 }
+    )
   } finally {
     ac.abort()
   }

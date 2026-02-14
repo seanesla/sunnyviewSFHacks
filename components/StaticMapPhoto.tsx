@@ -3,6 +3,8 @@
 import Image from "next/image"
 import { useMemo, useState } from "react"
 
+import { buildStaticMapSpec } from "@/lib/static-map"
+
 type StaticMapPhotoProps = {
   address?: string | null
   lat: number | null
@@ -23,7 +25,7 @@ function StaticMapImage({ src, alt }: StaticMapImageProps) {
   if (failed) {
     return (
       <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-destructive">
-        Failed to load photo. Check your Mapbox token and try again.
+        Failed to load satellite photo. Check your connection and try again.
       </div>
     )
   }
@@ -51,16 +53,7 @@ function StaticMapImage({ src, alt }: StaticMapImageProps) {
 export function StaticMapPhoto({ address, lat, lng, zoom, className }: StaticMapPhotoProps) {
   const src = useMemo(() => {
     if (lat === null || lng === null) return null
-    const z = zoom ?? 19
-    const qs = new URLSearchParams()
-    qs.set("lat", String(lat))
-    qs.set("lng", String(lng))
-    qs.set("zoom", String(z))
-    qs.set("w", "520")
-    qs.set("h", "360")
-    qs.set("scale", "2")
-    qs.set("style", "mapbox/satellite-streets-v12")
-    return `/api/static-map?${qs.toString()}`
+    return buildStaticMapSpec({ lat, lng, zoom }).src
   }, [lat, lng, zoom])
 
   const title = address?.trim() ? address.trim() : "Satellite preview"

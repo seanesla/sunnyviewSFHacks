@@ -8,6 +8,7 @@ import { RoofCanvas } from "@/components/RoofCanvas"
 import type { PanelSpec, Point } from "@/components/PanelPacking"
 import { packPanelsDeterministic } from "@/components/PanelPacking"
 import { apiUrl } from "@/lib/api"
+import { buildStaticMapSpec } from "@/lib/static-map"
 
 const Globe = dynamic(() => Promise.resolve(GlobeView), { ssr: false })
 
@@ -111,17 +112,8 @@ export default function SharePage() {
 
   const background = useMemo(() => {
     if (snapshot?.geometry?.background === "address" && lat !== null && lng !== null) {
-      const w = 520
-      const h = 360
-      const scale = 2
-      const qs = new URLSearchParams()
-      qs.set("lat", String(lat))
-      qs.set("lng", String(lng))
-      qs.set("zoom", String(zoom))
-      qs.set("w", String(w))
-      qs.set("h", String(h))
-      qs.set("scale", String(scale))
-      return { kind: "image" as const, src: `/api/static-map?${qs.toString()}`, widthPx: w * scale, heightPx: h * scale }
+      const spec = buildStaticMapSpec({ lat, lng, zoom })
+      return { kind: "image" as const, src: spec.src, widthPx: spec.widthPx, heightPx: spec.heightPx }
     }
     return { kind: "none" as const }
   }, [lat, lng, snapshot?.geometry?.background, zoom])
