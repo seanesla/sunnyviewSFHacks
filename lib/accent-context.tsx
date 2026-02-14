@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -102,7 +103,7 @@ export function AccentProvider({ children }: { children: ReactNode }) {
     setHydrated(true)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.style.setProperty("--accent-hue", String(hue))
     document.documentElement.style.setProperty("--accent-sat", String(saturation))
   }, [hue, saturation])

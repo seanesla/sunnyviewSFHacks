@@ -7,6 +7,17 @@ import { cn } from "@/lib/utils"
 
 type CesiumModule = typeof import("cesium")
 
+function orbitAccentColors(Cesium: CesiumModule, hue: number, saturation: number) {
+  const normalizedHue = ((((hue % 360) + 360) % 360) / 360)
+  const normalizedSat = Math.max(0, Math.min(1, saturation * 3.6))
+  const accent = Cesium.Color.fromHsl(normalizedHue, normalizedSat, 0.62)
+  return {
+    headColor: accent.withAlpha(0.98),
+    trailCoreColor: accent.withAlpha(0.46),
+    trailGlowColor: accent.withAlpha(0.16),
+  }
+}
+
 function createOrbitParticleSprite(): HTMLCanvasElement {
   const canvas = document.createElement("canvas")
   canvas.width = 80
@@ -65,8 +76,12 @@ export function GlobeView({
 }) {
   const isHero = variant === "hero"
   const { hue, saturation } = useAccent()
+  const accentRef = useRef({ hue, saturation })
+  accentRef.current.hue = hue
+  accentRef.current.saturation = saturation
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<import("cesium").Viewer | null>(null)
+  const cesiumRef = useRef<CesiumModule | null>(null)
   const markerEntityRef = useRef<import("cesium").Entity | null>(null)
   const clickSpinRafRef = useRef<number | null>(null)
   const landingSpinRafRef = useRef<number | null>(null)
@@ -75,6 +90,7 @@ export function GlobeView({
   const orbitHeadBillboardRef = useRef<import("cesium").Billboard | null>(null)
   const orbitTrailCoreEntityRef = useRef<import("cesium").Entity | null>(null)
   const orbitTrailGlowEntityRef = useRef<import("cesium").Entity | null>(null)
+  const orbitTrailGlowMaterialRef = useRef<import("cesium").PolylineGlowMaterialProperty | null>(null)
   const orbitTrailPositionsRef = useRef<import("cesium").Cartesian3[]>([])
   const orbitRafRef = useRef<number | null>(null)
   const orbitLastNowRef = useRef<number | null>(null)
@@ -104,6 +120,7 @@ export function GlobeView({
     orbitTrailCoreEntityRef.current = null
     const trailGlowEntity = orbitTrailGlowEntityRef.current
     orbitTrailGlowEntityRef.current = null
+    orbitTrailGlowMaterialRef.current = null
 
     const viewer = viewerArg ?? viewerRef.current
     if (!viewer) return
@@ -167,6 +184,7 @@ export function GlobeView({
         if (cancelled) return
 
         const Cesium: CesiumModule = await import("cesium")
+        cesiumRef.current = Cesium
         if (cancelled) return
 
         // Next.js: CopyWebpackPlugin outputs to `/_next/static/cesium/*` (Workers, Assets, Widgets).
@@ -474,26 +492,27 @@ export function GlobeView({
     const viewer = viewerRef.current
     if (!viewer) return
 
-    let cancelled = false
-    clearLandingOrbit(viewer)
+    if (!landingActive) {
+      clearLandingOrbit(viewer)
+      return
+    }
 
-    if (!landingActive) return
+    if (orbitBillboardCollectionRef.current) return
+
+    let cancelled = false
 
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
 
     ;(async () => {
-      const Cesium: CesiumModule = await import("cesium")
+      const Cesium: CesiumModule = cesiumRef.current ?? (await import("cesium"))
+      cesiumRef.current = Cesium
       if (cancelled) return
 
       const liveViewer = viewerRef.current
       if (!liveViewer) return
 
-      const normalizedHue = ((((hue % 360) + 360) % 360) / 360)
-      const normalizedSat = Math.max(0, Math.min(1, saturation * 3.6))
-      const accent = Cesium.Color.fromHsl(normalizedHue, normalizedSat, 0.62)
-      const headColor = accent.withAlpha(0.98)
-      const trailCoreColor = accent.withAlpha(0.46)
-      const trailGlowColor = accent.withAlpha(0.16)
+      const { hue: accentHue, saturation: accentSat } = accentRef.current
+      const { headColor, trailCoreColor, trailGlowColor } = orbitAccentColors(Cesium, accentHue, accentSat)
       const sprite = createOrbitParticleSprite()
 
       const billboards = liveViewer.scene.primitives.add(new Cesium.BillboardCollection())
@@ -652,15 +671,18 @@ export function GlobeView({
 
       const trailPositionsProperty = new Cesium.CallbackProperty(() => orbitTrailPositionsRef.current, false)
 
+      const trailGlowMaterial = new Cesium.PolylineGlowMaterialProperty({
+        color: trailGlowColor,
+        glowPower: 0.22,
+        taperPower: 0.78,
+      })
+      orbitTrailGlowMaterialRef.current = trailGlowMaterial
+
       orbitTrailGlowEntityRef.current = liveViewer.entities.add({
         polyline: {
           positions: trailPositionsProperty,
           width: 14,
-          material: new Cesium.PolylineGlowMaterialProperty({
-            color: trailGlowColor,
-            glowPower: 0.22,
-            taperPower: 0.78,
-          }),
+          material: trailGlowMaterial,
         },
       })
 
@@ -737,7 +759,51 @@ export function GlobeView({
       cancelled = true
       clearLandingOrbit()
     }
-  }, [clearLandingOrbit, hue, isHero, landingActive, ready, saturation])
+  }, [clearLandingOrbit, isHero, landingActive, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    if (!isHero) return
+
+    const Cesium = cesiumRef.current
+    if (!Cesium) return
+
+    const orbitHead = orbitHeadBillboardRef.current
+    const trailCoreEntity = orbitTrailCoreEntityRef.current
+    const trailGlowMaterial = orbitTrailGlowMaterialRef.current
+    const trailGlowEntity = orbitTrailGlowEntityRef.current
+    if (!orbitHead && !trailCoreEntity && !trailGlowMaterial && !trailGlowEntity) return
+
+    const { headColor, trailCoreColor, trailGlowColor } = orbitAccentColors(Cesium, hue, saturation)
+
+    if (orbitHead) {
+      orbitHead.color = headColor
+    }
+
+    const corePolyline = trailCoreEntity?.polyline
+    if (corePolyline) {
+      ;(corePolyline as any).material = trailCoreColor
+    }
+
+    if (trailGlowMaterial) {
+      ;(trailGlowMaterial as any).color = trailGlowColor
+    } else if (trailGlowEntity?.polyline) {
+      ;(trailGlowEntity.polyline as any).material = new Cesium.PolylineGlowMaterialProperty({
+        color: trailGlowColor,
+        glowPower: 0.22,
+        taperPower: 0.78,
+      })
+    }
+
+    const viewer = viewerRef.current
+    if (viewer) {
+      try {
+        viewer.scene.requestRender()
+      } catch {
+        // ignore
+      }
+    }
+  }, [hue, isHero, ready, saturation])
 
   useEffect(() => {
     if (!ready) return

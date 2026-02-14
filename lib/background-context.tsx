@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -106,7 +107,7 @@ export function BackgroundProvider({ children }: { children: ReactNode }) {
     setHydrated(true)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.style.setProperty("--bg-motion", String(motion))
     document.documentElement.style.setProperty("--bg-intensity", String(intensity))
     document.documentElement.dataset.backgroundMode = mode

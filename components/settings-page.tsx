@@ -17,6 +17,23 @@ import { useBackground } from "@/lib/background-context";
 import { useUiStyle } from "@/lib/ui-style-context";
 import { cn } from "@/lib/utils";
 
+function AccentLivePreview() {
+  const { hue, saturation } = useAccent();
+
+  return (
+    <div className="mt-3 flex items-center gap-3">
+      <div
+        className="h-14 w-14 rounded-full border border-foreground/20 shadow-[0_0_30px_-6px_rgba(0,0,0,0.65)]"
+        style={{ background: `oklch(0.72 ${saturation} ${hue})` }}
+      />
+      <div>
+        <div className="text-sm font-semibold text-foreground">App Accent</div>
+        <div className="text-xs text-muted-foreground">{`oklch(0.72 ${saturation.toFixed(2)} ${Math.round(hue)})`}</div>
+      </div>
+    </div>
+  );
+}
+
 const AURORA_GRID_BACKGROUND = {
   label: "Adaptive Fusion/Grid",
   description: "Landing uses Fusion, then dashboard transitions to Dark Grid.",
@@ -32,7 +49,6 @@ interface SettingsPageProps {
 
 export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
   const prefersReducedMotion = useReducedMotion();
-  const { hue, saturation } = useAccent();
   const {
     motion: backgroundMotion,
     intensity,
@@ -231,18 +247,7 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
 
             <aside className="rounded-xl border border-border/80 bg-background/35 p-4">
               <div className="text-xs text-muted-foreground">Live preview</div>
-              <div className="mt-3 flex items-center gap-3">
-                <div
-                  className="h-14 w-14 rounded-full border border-foreground/20 shadow-[0_0_30px_-6px_rgba(0,0,0,0.65)]"
-                  style={{ background: `oklch(0.72 ${saturation} ${hue})` }}
-                />
-                <div>
-                  <div className="text-sm font-semibold text-foreground">
-                    App Accent
-                  </div>
-                  <div className="text-xs text-muted-foreground">{`oklch(0.72 ${saturation.toFixed(2)} ${Math.round(hue)})`}</div>
-                </div>
-              </div>
+              <AccentLivePreview />
 
               <div className="mt-4 rounded-lg border border-border/80 bg-card/60 p-3">
                 <div className="text-xs text-muted-foreground">Sample button</div>
