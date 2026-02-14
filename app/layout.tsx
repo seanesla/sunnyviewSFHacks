@@ -6,6 +6,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import './globals.css'
 import { AccentProvider } from '@/lib/accent-context'
 import { BackgroundProvider } from '@/lib/background-context'
+import { UiStyleProvider } from '@/lib/ui-style-context'
 import { RouteTransition } from '@/components/route-transition'
 import sunnyviewLogo from '@/sunnyviewlogo.svg'
 
@@ -49,7 +50,9 @@ export default function RootLayout({
       <body suppressHydrationWarning className={`font-sans antialiased`}>
         <BackgroundProvider>
           <AccentProvider>
-            <RouteTransition>{children}</RouteTransition>
+            <UiStyleProvider>
+              <RouteTransition>{children}</RouteTransition>
+            </UiStyleProvider>
           </AccentProvider>
         </BackgroundProvider>
         <Analytics />

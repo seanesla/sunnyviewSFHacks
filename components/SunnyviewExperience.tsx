@@ -435,6 +435,8 @@ export function SunnyviewExperience() {
   } | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
 
+  const sceneMode = opened ? "grid" : "fusion";
+
   async function runExplain() {
     setExplainLoading(true);
     try {
@@ -798,7 +800,7 @@ export function SunnyviewExperience() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background">
-      <BackgroundScene />
+      <BackgroundScene mode={sceneMode} transitionMs={900} />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,20,0.10)_0%,rgba(3,8,20,0.14)_42%,rgba(3,8,20,0.28)_100%)]" />
 
       <GlobeStage

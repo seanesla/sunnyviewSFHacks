@@ -9,12 +9,13 @@ interface AccentColorControlProps {
   className?: string
   compact?: boolean
   showSwatch?: boolean
+  onAccentChange?: () => void
 }
 
 const HUE_PICKER_SATURATION = 100
 const HUE_PICKER_LIGHTNESS = 50
 
-export function AccentColorControl({ className, compact = false, showSwatch = true }: AccentColorControlProps) {
+export function AccentColorControl({ className, compact = false, showSwatch = true, onAccentChange }: AccentColorControlProps) {
   const { hue, saturation, setHue, setSaturation } = useAccent()
 
   const pickerColor = useMemo<HslColor>(
@@ -24,6 +25,7 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
 
   function handleHueChange(nextColor: HslColor) {
     setHue(nextColor.h)
+    onAccentChange?.()
   }
 
   return (
@@ -51,7 +53,10 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
           max={ACCENT_SAT_MAX}
           step={0.01}
           value={saturation}
-          onChange={(event) => setSaturation(Number(event.target.value))}
+          onChange={(event) => {
+            setSaturation(Number(event.target.value))
+            onAccentChange?.()
+          }}
           className="hue-slider h-3 w-full cursor-pointer appearance-none rounded-full outline-none"
           style={{
             background: `linear-gradient(to right, oklch(0.74 ${ACCENT_SAT_MIN} ${hue}), oklch(0.74 ${ACCENT_SAT_MAX} ${hue}))`,

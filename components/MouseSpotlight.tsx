@@ -22,11 +22,18 @@ export function MouseSpotlight({ strength = 1, className }: MouseSpotlightProps)
     let targetY = window.innerHeight / 2
     let currentX = targetX
     let currentY = targetY
-    let raf = 0
+    let raf: number | null = null
 
     const setMouseVars = (x: number, y: number) => {
       root.style.setProperty("--mouse-x", `${x}px`)
       root.style.setProperty("--mouse-y", `${y}px`)
+    }
+
+    const stopTicking = () => {
+      if (raf !== null) {
+        cancelAnimationFrame(raf)
+        raf = null
+      }
     }
 
     const handler = (e: MouseEvent) => {
@@ -37,6 +44,11 @@ export function MouseSpotlight({ strength = 1, className }: MouseSpotlightProps)
         currentX = targetX
         currentY = targetY
         setMouseVars(currentX, currentY)
+        return
+      }
+
+      if (raf === null) {
+        raf = requestAnimationFrame(tick)
       }
     }
 
@@ -45,21 +57,26 @@ export function MouseSpotlight({ strength = 1, className }: MouseSpotlightProps)
       currentX += (targetX - currentX) * smoothing
       currentY += (targetY - currentY) * smoothing
       setMouseVars(currentX, currentY)
+
+      const dx = targetX - currentX
+      const dy = targetY - currentY
+      if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) {
+        currentX = targetX
+        currentY = targetY
+        setMouseVars(currentX, currentY)
+        raf = null
+        return
+      }
+
       raf = requestAnimationFrame(tick)
     }
 
     setMouseVars(currentX, currentY)
     window.addEventListener("mousemove", handler)
 
-    if (!reduceMotion) {
-      raf = requestAnimationFrame(tick)
-    }
-
     return () => {
       window.removeEventListener("mousemove", handler)
-      if (raf) {
-        cancelAnimationFrame(raf)
-      }
+      stopTicking()
     }
   }, [])
 

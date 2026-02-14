@@ -61,17 +61,19 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
     let cols = 0
     let rows = 0
+    let renderDpr = 1
+    const cellStride = CELL_SIZE + GAP
 
     function resize() {
-      const dpr = window.devicePixelRatio || 1
+      renderDpr = window.devicePixelRatio || 1
       ctx.setTransform(1, 0, 0, 1, 0, 0)
-      canvasEl.width = Math.floor(window.innerWidth * dpr)
-      canvasEl.height = Math.floor(window.innerHeight * dpr)
+      canvasEl.width = Math.floor(window.innerWidth * renderDpr)
+      canvasEl.height = Math.floor(window.innerHeight * renderDpr)
       canvasEl.style.width = `${window.innerWidth}px`
       canvasEl.style.height = `${window.innerHeight}px`
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      cols = Math.ceil(window.innerWidth / (CELL_SIZE + GAP)) + 1
-      rows = Math.ceil(window.innerHeight / (CELL_SIZE + GAP)) + 1
+      ctx.setTransform(renderDpr, 0, 0, renderDpr, 0, 0)
+      cols = Math.ceil(window.innerWidth / cellStride) + 1
+      rows = Math.ceil(window.innerHeight / cellStride) + 1
       initCells(cols, rows)
     }
 
@@ -85,14 +87,17 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
 
     function animate() {
       const now = performance.now()
-      const w = canvasEl.width / (window.devicePixelRatio || 1)
-      const h = canvasEl.height / (window.devicePixelRatio || 1)
+      const w = canvasEl.width / renderDpr
+      const h = canvasEl.height / renderDpr
       ctx.clearRect(0, 0, w, h)
 
       const mx = mouseRef.current.x
       const my = mouseRef.current.y
       const accentHue = hueRef.current
       const ambientPulse = 0.5 + Math.sin(now * 0.0006 * motionScale) * 0.5
+      const radius = 180 * motionScale
+      const radiusSq = radius * radius
+      const ambient = (0.012 + ambientPulse * 0.02) * intensityScale
 
       for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
@@ -100,18 +105,20 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
           const cell = cellsRef.current[idx]
           if (!cell) continue
 
-          const cx = col * (CELL_SIZE + GAP) + CELL_SIZE / 2
-          const cy = row * (CELL_SIZE + GAP) + CELL_SIZE / 2
-          const dist = Math.sqrt((cx - mx) ** 2 + (cy - my) ** 2)
-
-          const radius = 180 * motionScale
-          const ambient = (0.012 + ambientPulse * 0.02) * intensityScale
+          const cx = col * cellStride + CELL_SIZE / 2
+          const cy = row * cellStride + CELL_SIZE / 2
 
           if (reduceMotion) {
             const drift = (Math.sin(now * 0.00035 + row * 0.32 + col * 0.24) + 1) * 0.5
             cell.target = ambient * (0.4 + drift * 0.4)
           } else {
-            const hover = dist < radius ? (1 - dist / radius) * 0.34 * intensityScale : 0
+            const dx = cx - mx
+            const dy = cy - my
+            const distSq = dx * dx + dy * dy
+            const hover =
+              distSq < radiusSq
+                ? (1 - Math.sqrt(distSq) / radius) * 0.34 * intensityScale
+                : 0
             cell.target = hover + ambient * 0.35
           }
 
@@ -137,12 +144,33 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
       animRef.current = requestAnimationFrame(animate)
     }
 
-    animRef.current = requestAnimationFrame(animate)
+    const startAnimation = () => {
+      if (animRef.current !== 0) return
+      animRef.current = requestAnimationFrame(animate)
+    }
+
+    const stopAnimation = () => {
+      if (animRef.current === 0) return
+      cancelAnimationFrame(animRef.current)
+      animRef.current = 0
+    }
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stopAnimation()
+        return
+      }
+      startAnimation()
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    startAnimation()
 
     return () => {
-      cancelAnimationFrame(animRef.current)
+      stopAnimation()
       window.removeEventListener("resize", resize)
       window.removeEventListener("mousemove", onMouseMove)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [CELL_SIZE, initCells, intensityScale, motionScale])
 

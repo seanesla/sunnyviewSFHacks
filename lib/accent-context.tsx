@@ -1,6 +1,14 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 
 const ACCENT_STORAGE_KEY = "sunnyview-accent-v1"
 
@@ -57,16 +65,39 @@ const AccentContext = createContext<AccentContextType>({
 })
 
 export function AccentProvider({ children }: { children: ReactNode }) {
-  const [hue, setHue] = useState(DEFAULT_HUE)
-  const [saturation, setSaturation] = useState(DEFAULT_SATURATION)
+  const [hue, setHueState] = useState(DEFAULT_HUE)
+  const [saturation, setSaturationState] = useState(DEFAULT_SATURATION)
   const [hydrated, setHydrated] = useState(false)
+  const pendingAccentRef = useRef<StoredAccent>({
+    hue: DEFAULT_HUE,
+    saturation: DEFAULT_SATURATION,
+  })
+  const frameRef = useRef<number | null>(null)
+  const persistTimeoutRef = useRef<number | null>(null)
+
+  const applyPendingAccent = useCallback(() => {
+    const pending = pendingAccentRef.current
+    setHueState((prev) => (prev === pending.hue ? prev : pending.hue))
+    setSaturationState((prev) =>
+      prev === pending.saturation ? prev : pending.saturation
+    )
+  }, [])
+
+  const scheduleApplyPendingAccent = useCallback(() => {
+    if (frameRef.current !== null) return
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null
+      applyPendingAccent()
+    })
+  }, [applyPendingAccent])
 
   useEffect(() => {
     const storedAccent = readStoredAccent()
     if (storedAccent) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setHue(storedAccent.hue)
-      setSaturation(storedAccent.saturation)
+      setHueState(storedAccent.hue)
+      setSaturationState(storedAccent.saturation)
+      pendingAccentRef.current = storedAccent
     }
     setHydrated(true)
   }, [])
@@ -79,26 +110,72 @@ export function AccentProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated) return
 
+    if (persistTimeoutRef.current !== null) {
+      window.clearTimeout(persistTimeoutRef.current)
+      persistTimeoutRef.current = null
+    }
+
     const stored: StoredAccent = { hue, saturation }
-    window.localStorage.setItem(ACCENT_STORAGE_KEY, JSON.stringify(stored))
-    window.dispatchEvent(new CustomEvent("sunnyview:accent-change", { detail: stored }))
+    persistTimeoutRef.current = window.setTimeout(() => {
+      persistTimeoutRef.current = null
+      window.localStorage.setItem(ACCENT_STORAGE_KEY, JSON.stringify(stored))
+    }, 220)
+
+    return () => {
+      if (persistTimeoutRef.current !== null) {
+        window.clearTimeout(persistTimeoutRef.current)
+        persistTimeoutRef.current = null
+      }
+    }
   }, [hue, saturation, hydrated])
 
+  useEffect(() => {
+    return () => {
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
+      }
+      if (persistTimeoutRef.current !== null) {
+        window.clearTimeout(persistTimeoutRef.current)
+        persistTimeoutRef.current = null
+      }
+    }
+  }, [])
+
   function handleSetHue(nextHue: number) {
-    setHue(normalizeHue(nextHue))
+    pendingAccentRef.current = {
+      ...pendingAccentRef.current,
+      hue: normalizeHue(nextHue),
+    }
+    scheduleApplyPendingAccent()
   }
 
   function handleSetSaturation(nextSaturation: number) {
-    setSaturation(clamp(nextSaturation, ACCENT_SAT_MIN, ACCENT_SAT_MAX))
+    pendingAccentRef.current = {
+      ...pendingAccentRef.current,
+      saturation: clamp(nextSaturation, ACCENT_SAT_MIN, ACCENT_SAT_MAX),
+    }
+    scheduleApplyPendingAccent()
   }
 
   function resetAccent() {
-    setHue(DEFAULT_HUE)
-    setSaturation(DEFAULT_SATURATION)
+    pendingAccentRef.current = {
+      hue: DEFAULT_HUE,
+      saturation: DEFAULT_SATURATION,
+    }
+    scheduleApplyPendingAccent()
   }
 
   return (
-    <AccentContext.Provider value={{ hue, saturation, setHue: handleSetHue, setSaturation: handleSetSaturation, resetAccent }}>
+    <AccentContext.Provider
+      value={{
+        hue,
+        saturation,
+        setHue: handleSetHue,
+        setSaturation: handleSetSaturation,
+        resetAccent,
+      }}
+    >
       {children}
     </AccentContext.Provider>
   )

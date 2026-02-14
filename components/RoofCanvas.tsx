@@ -92,6 +92,13 @@ export function RoofCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const drawRef = useRef<() => void>(() => {})
+  const invalidateRef = useRef<() => void>(() => {})
+  const drawRafRef = useRef<number | null>(null)
+  const canvasMetricsRef = useRef<{ width: number; height: number; dpr: number }>({
+    width: 0,
+    height: 0,
+    dpr: 0,
+  })
   const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
@@ -135,6 +142,14 @@ export function RoofCanvas({
     [internalSize.h, internalSize.w]
   )
 
+  const invalidate = useCallback(() => {
+    if (drawRafRef.current !== null) return
+    drawRafRef.current = window.requestAnimationFrame(() => {
+      drawRafRef.current = null
+      drawRef.current()
+    })
+  }, [])
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
@@ -142,8 +157,18 @@ export function RoofCanvas({
 
     const rect = container.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.max(1, Math.floor(rect.width * dpr))
-    canvas.height = Math.max(1, Math.floor(rect.height * dpr))
+    const nextWidth = Math.max(1, Math.floor(rect.width * dpr))
+    const nextHeight = Math.max(1, Math.floor(rect.height * dpr))
+    const lastMetrics = canvasMetricsRef.current
+    if (
+      lastMetrics.width !== nextWidth ||
+      lastMetrics.height !== nextHeight ||
+      lastMetrics.dpr !== dpr
+    ) {
+      canvas.width = nextWidth
+      canvas.height = nextHeight
+      canvasMetricsRef.current = { width: nextWidth, height: nextHeight, dpr }
+    }
 
     const ctx = canvas.getContext("2d")
     if (!ctx) return
@@ -194,7 +219,7 @@ export function RoofCanvas({
             img = new Image()
             img.crossOrigin = "anonymous"
             img.src = `https://tile.openstreetmap.org/${z}/${wrappedX}/${clampedY}.png`
-            img.onload = () => drawRef.current()
+            img.onload = () => invalidateRef.current()
             tileCacheRef.current.set(key, img)
           }
 
@@ -453,29 +478,48 @@ export function RoofCanvas({
   }, [draw])
 
   useEffect(() => {
+    invalidateRef.current = invalidate
+  }, [invalidate])
+
+  useEffect(() => {
     if (background.kind !== "image" || !imageSrc) {
       imgRef.current = null
+      invalidate()
       return
     }
+
     const img = new Image()
     img.onload = () => {
       imgRef.current = img
-      draw()
+      invalidate()
+    }
+    img.onerror = () => {
+      imgRef.current = null
+      invalidate()
     }
     img.src = imageSrc
-  }, [background.kind, draw, imageSrc])
+  }, [background.kind, imageSrc, invalidate])
 
   useEffect(() => {
-    draw()
-  }, [draw])
+    invalidate()
+  }, [draw, invalidate])
 
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => draw())
+    const ro = new ResizeObserver(() => invalidate())
     ro.observe(el)
     return () => ro.disconnect()
-  }, [draw])
+  }, [invalidate])
+
+  useEffect(() => {
+    return () => {
+      if (drawRafRef.current !== null) {
+        window.cancelAnimationFrame(drawRafRef.current)
+        drawRafRef.current = null
+      }
+    }
+  }, [])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -525,9 +569,9 @@ export function RoofCanvas({
 
       if (mode === "edit" && closed) {
         const idx = nearestVertexIdx(internal, vertices, 12 / internal.scale)
-        setHoverIdx(idx)
+        setHoverIdx((prev) => (prev === idx ? prev : idx))
       } else {
-        setHoverIdx(null)
+        setHoverIdx((prev) => (prev === null ? prev : null))
       }
 
       if (mode !== "edit") return
