@@ -7,9 +7,11 @@ import './globals.css'
 import { AccentProvider } from '@/lib/accent-context'
 import { BackgroundProvider } from '@/lib/background-context'
 import { RouteTransition } from '@/components/route-transition'
+import sunnyviewLogo from '@/sunnyviewlogo.svg'
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const sunnyviewLogoSrc = typeof sunnyviewLogo === 'string' ? sunnyviewLogo : sunnyviewLogo.src
 
 export const metadata: Metadata = {
   title: 'sunnyview - Solar Feasibility in 30 Seconds',
@@ -41,6 +43,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <link rel="preload" as="image" type="image/svg+xml" href={sunnyviewLogoSrc} />
+      </head>
       <body suppressHydrationWarning className={`font-sans antialiased`}>
         <BackgroundProvider>
           <AccentProvider>

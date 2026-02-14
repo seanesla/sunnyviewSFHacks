@@ -15,10 +15,43 @@ interface SunnyviewLogoLoaderProps {
 
 export function SunnyviewLogoLoader({ className }: SunnyviewLogoLoaderProps) {
   const logoSrc = typeof sunnyviewLogo === "string" ? sunnyviewLogo : sunnyviewLogo.src
+  const [logoReady, setLogoReady] = useState(false)
   const [animationArmed, setAnimationArmed] = useState(false)
   const [phraseIndex, setPhraseIndex] = useState(0)
 
   useEffect(() => {
+    let cancelled = false
+    const preload = new Image()
+
+    const markReady = () => {
+      if (cancelled) return
+      setLogoReady(true)
+    }
+
+    preload.decoding = "sync"
+    preload.src = logoSrc
+
+    if (preload.complete && preload.naturalWidth > 0) {
+      markReady()
+    } else {
+      preload.addEventListener("load", markReady)
+      preload.addEventListener("error", markReady)
+      if (typeof preload.decode === "function") {
+        void preload.decode().then(markReady).catch(() => {
+          // ignore; load/error listeners still handle completion
+        })
+      }
+    }
+
+    return () => {
+      cancelled = true
+      preload.removeEventListener("load", markReady)
+      preload.removeEventListener("error", markReady)
+    }
+  }, [logoSrc])
+
+  useEffect(() => {
+    if (!logoReady) return
     const startRaf = window.requestAnimationFrame(() => {
       setAnimationArmed(true)
     })
@@ -26,7 +59,7 @@ export function SunnyviewLogoLoader({ className }: SunnyviewLogoLoaderProps) {
     return () => {
       window.cancelAnimationFrame(startRaf)
     }
-  }, [])
+  }, [logoReady])
 
   useEffect(() => {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
@@ -51,7 +84,11 @@ export function SunnyviewLogoLoader({ className }: SunnyviewLogoLoaderProps) {
 
       <div className="sv-loader__mark" aria-hidden>
         <span
-          className={cn("sv-loader__logo", animationArmed && "sv-loader__logo--animate")}
+          className={cn(
+            "sv-loader__logo",
+            logoReady && "sv-loader__logo--ready",
+            animationArmed && "sv-loader__logo--animate"
+          )}
           style={logoMaskStyle}
         />
       </div>

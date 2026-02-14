@@ -47,8 +47,9 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
 
   return (
     <div
-      className="flex flex-col justify-center gap-6 transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0"
+      className="flex flex-col justify-center gap-6 transition-[opacity,transform,filter] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0"
       style={{
+        transitionDuration: visible ? "900ms" : "220ms",
         opacity: visible ? 1 : 0,
         transform: visible ? "translateX(0)" : "translateX(-48px)",
         filter: visible ? "blur(0px)" : "blur(10px)",

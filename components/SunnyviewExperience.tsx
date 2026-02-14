@@ -868,10 +868,10 @@ export function SunnyviewExperience() {
                 <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1">
                   <div
                     className={cn(
-                      "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                      "transition-[opacity,transform,filter] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                       entered && !opened
-                        ? "translate-x-0 opacity-100 blur-0"
-                        : "pointer-events-none -translate-x-8 opacity-0 blur-md",
+                        ? "translate-x-0 opacity-100 blur-0 duration-[900ms]"
+                        : "pointer-events-none -translate-x-8 opacity-0 blur-md duration-[220ms]",
                     )}
                   >
                     <HeroSection

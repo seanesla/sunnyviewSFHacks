@@ -453,11 +453,10 @@ export function GlobeView({
         className
       )}
     >
-      {!error && (
+      {showLoader && !error && (
         <div
           className={cn(
-            "absolute inset-0 z-10 grid place-items-center overflow-hidden transition-opacity duration-200 ease-out motion-reduce:duration-0",
-            showLoader ? "opacity-100" : "pointer-events-none opacity-0",
+            "absolute inset-0 z-10 grid place-items-center overflow-hidden",
             isHero ? "bg-transparent" : "bg-gradient-to-b from-black/10 via-black/20 to-black/40"
           )}
         >
