@@ -1,5 +1,7 @@
-import { useEffect, useState, type CSSProperties } from "react"
-import sunnyviewLogo from "@/sunnyviewlogo.svg"
+import { useEffect, useRef, useState } from "react"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
+
+import SunnyviewLogoOptimized from "@/components/SunnyviewLogoOptimized"
 import { cn } from "@/lib/utils"
 
 const LOFI_PHRASES = [
@@ -14,11 +16,22 @@ interface SunnyviewLogoLoaderProps {
 }
 
 export function SunnyviewLogoLoader({ className }: SunnyviewLogoLoaderProps) {
-  const logoSrc = typeof sunnyviewLogo === "string" ? sunnyviewLogo : sunnyviewLogo.src
   const [phraseIndex, setPhraseIndex] = useState(0)
+  const reduceMotion = useReducedMotion()
+  const glyphRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+    const root = glyphRef.current
+    if (!root) return
+
+    const path = root.querySelector<SVGPathElement>("path")
+    if (!path) return
+
+    const pathLength = Math.ceil(path.getTotalLength())
+    root.style.setProperty("--sv-loader-path-length", `${pathLength}`)
+  }, [])
+
+  useEffect(() => {
     if (reduceMotion) return
 
     const tickerInterval = window.setInterval(() => {
@@ -28,36 +41,53 @@ export function SunnyviewLogoLoader({ className }: SunnyviewLogoLoaderProps) {
     return () => {
       window.clearInterval(tickerInterval)
     }
-  }, [])
-
-  const logoMaskStyle = {
-    ["--sv-loader-logo-src" as string]: `url("${logoSrc}")`,
-  } as CSSProperties
+  }, [reduceMotion])
 
   return (
     <div className={cn("sv-loader", className)}>
       <span className="sr-only">Loading Sunnyview</span>
 
-      <div className="sv-loader__mark" aria-hidden>
-        <span
-          className="sv-loader__logo sv-loader__logo--animate"
-          style={logoMaskStyle}
-        />
-      </div>
+      <motion.div
+        className="sv-loader__mark"
+        aria-hidden
+        initial={reduceMotion ? false : { opacity: 0, y: 9, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.62, ease: [0.2, 0.85, 0.2, 1] }}
+      >
+        <div ref={glyphRef} className="sv-loader__glyph">
+          <SunnyviewLogoOptimized className="sv-loader__svg" aria-hidden />
+        </div>
+        {!reduceMotion ? <span className="sv-loader__beam" /> : null}
+      </motion.div>
 
-      <div className="sv-loader__status" aria-hidden>
+      <motion.div
+        className="sv-loader__status"
+        aria-hidden
+        initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.52, delay: 0.14, ease: [0.2, 0.85, 0.2, 1] }}
+      >
         <span className="sv-loader__title">Preparing Sunnyview</span>
         <div className="sv-loader__ticker">
-          <span key={phraseIndex} className="sv-loader__phrase">
-            {LOFI_PHRASES[phraseIndex]}
-          </span>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={phraseIndex}
+              className="sv-loader__phrase"
+              initial={reduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={reduceMotion ? { duration: 0.01 } : { duration: 0.4, ease: [0.2, 0.85, 0.2, 1] }}
+            >
+              {LOFI_PHRASES[phraseIndex]}
+            </motion.span>
+          </AnimatePresence>
           <span className="sv-loader__dots">
             <span>.</span>
             <span>.</span>
             <span>.</span>
           </span>
         </div>
-      </div>
+      </motion.div>
     </div>
   )
 }
