@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowLeft,
+  Check,
   Palette,
   RotateCcw,
   SlidersHorizontal,
@@ -12,27 +13,14 @@ import {
 import { AccentColorControl } from "@/components/accent-color-control";
 import { BackgroundScene } from "@/components/BackgroundScene";
 import { useAccent } from "@/lib/accent-context";
-import { type BackgroundMode, useBackground } from "@/lib/background-context";
+import { useBackground } from "@/lib/background-context";
+import { useUiStyle } from "@/lib/ui-style-context";
 import { cn } from "@/lib/utils";
 
-const BACKGROUND_OPTIONS: Array<{
-  mode: BackgroundMode;
-  label: string;
-  description: string;
-}> = [
-  {
-    mode: "fusion",
-    label: "Fusion",
-    description: "Aurora + reactive pixel field",
-  },
-  {
-    mode: "prism",
-    label: "Prism",
-    description: "Neon rays with animated rings",
-  },
-  { mode: "aurora", label: "Aurora", description: "Soft atmospheric motion" },
-  { mode: "grid", label: "Grid", description: "Interactive digital lattice" },
-];
+const AURORA_GRID_BACKGROUND = {
+  label: "Adaptive Fusion/Grid",
+  description: "Landing uses Fusion, then dashboard transitions to Dark Grid.",
+};
 
 const SOFT_EASE: [number, number, number, number] = [0.2, 0.9, 0.24, 1];
 const FADE_EASE: [number, number, number, number] = [0.33, 1, 0.68, 1];
@@ -44,21 +32,25 @@ interface SettingsPageProps {
 
 export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
   const prefersReducedMotion = useReducedMotion();
-  const { hue, saturation, resetAccent } = useAccent();
+  const { hue, saturation } = useAccent();
   const {
-    mode,
     motion: backgroundMotion,
     intensity,
     spotlight,
-    setMode,
     setMotion,
     setIntensity,
     setSpotlight,
-    resetBackground,
   } = useBackground();
-  const activeBackground =
-    BACKGROUND_OPTIONS.find((option) => option.mode === mode) ??
-    BACKGROUND_OPTIONS[0];
+  const {
+    presetId,
+    styleMode,
+    activePreset,
+    presets,
+    selectPreset,
+    markCustom,
+    resetVisualStyle,
+  } = useUiStyle();
+  const activeBackground = AURORA_GRID_BACKGROUND;
 
   const backButton =
     embedded && onClose ? (
@@ -162,97 +154,155 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
         <div className="flex items-center gap-2 text-primary">
           <Palette size={16} />
           <span className="text-xs font-semibold tracking-[0.18em] uppercase">
-            Accent
+            Visual style
           </span>
         </div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          Style your accent and background
+          Add a polished finish
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Choose the color system and the full background style. This updates
-          both the landing page and the app view.
+          Pick a preset, then fine-tune accent and background controls. This
+          keeps your current UI while adding a stronger cosmetic touch.
         </p>
-
-        <div className="mt-6 grid gap-5 md:grid-cols-[minmax(0,1fr)_240px]">
-          <AccentColorControl className="rounded-xl border border-border/80 bg-background/35 p-4" />
-
-          <aside className="rounded-xl border border-border/80 bg-background/35 p-4">
-            <div className="text-xs text-muted-foreground">Live preview</div>
-            <div className="mt-3 flex items-center gap-3">
-              <div
-                className="h-14 w-14 rounded-full border border-foreground/20 shadow-[0_0_30px_-6px_rgba(0,0,0,0.65)]"
-                style={{ background: `oklch(0.72 ${saturation} ${hue})` }}
-              />
-              <div>
-                <div className="text-sm font-semibold text-foreground">
-                  App Accent
-                </div>
-                <div className="text-xs text-muted-foreground">{`oklch(0.72 ${saturation.toFixed(2)} ${Math.round(hue)})`}</div>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-border/80 bg-card/60 p-3">
-              <div className="text-xs text-muted-foreground">Sample button</div>
-              <button
-                type="button"
-                className="mt-2 w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground"
-              >
-                Primary Action
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-border/80 bg-card/60 p-3">
-              <div className="text-xs text-muted-foreground">Background</div>
-              <div className="mt-1 text-sm font-semibold text-foreground">
-                {activeBackground.label}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {activeBackground.description}
-              </div>
-            </div>
-          </aside>
-        </div>
 
         <section className="mt-8 border-t border-border/70 pt-6">
           <div className="flex items-center gap-2 text-primary">
             <Sparkles size={16} />
             <span className="text-xs font-semibold tracking-[0.18em] uppercase">
-              Background
+              Presets
             </span>
           </div>
 
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            {BACKGROUND_OPTIONS.map((option) => {
-              const active = option.mode === mode;
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            {presets.map((preset) => {
+              const selected = preset.id === presetId;
+              const active = selected && styleMode === "preset";
               return (
                 <button
-                  key={option.mode}
+                  key={preset.id}
                   type="button"
-                  onClick={() => setMode(option.mode)}
-                  className={`rounded-lg border px-3 py-2 text-left transition ${
-                    active
-                      ? "border-primary/70 bg-primary/15"
-                      : "border-border/70 bg-background/35 hover:bg-background/55"
-                  }`}
+                  aria-pressed={selected}
+                  onClick={() => selectPreset(preset.id)}
+                  className={cn(
+                    "rounded-lg border bg-background/35 px-3 py-3 text-left transition",
+                    selected
+                      ? "border-primary/70 bg-primary/12"
+                      : "border-border/70 hover:bg-background/55",
+                  )}
                 >
-                  <div className="text-sm font-semibold text-foreground">
-                    {option.label}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-foreground">
+                      {preset.label}
+                    </div>
+                    {active ? <Check size={14} className="text-primary" /> : null}
                   </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {option.description}
+                  <div
+                    className="mt-2 h-8 rounded-md border border-white/10"
+                    style={{ background: preset.previewGradient }}
+                  />
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {preset.description}
                   </div>
                 </button>
               );
             })}
           </div>
 
+          <div className="mt-3 text-xs text-muted-foreground">
+            {styleMode === "custom"
+              ? `Custom mode active (based on ${activePreset.label}).`
+              : `${activePreset.label} preset active.`}
+          </div>
+        </section>
+
+        <section className="mt-8">
+          <div className="flex items-center gap-2 text-primary">
+            <Palette size={16} />
+            <span className="text-xs font-semibold tracking-[0.18em] uppercase">
+              Accent
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-5 md:grid-cols-[minmax(0,1fr)_240px]">
+            <AccentColorControl
+              className="rounded-xl border border-border/80 bg-background/35 p-4"
+              onAccentChange={markCustom}
+            />
+
+            <aside className="rounded-xl border border-border/80 bg-background/35 p-4">
+              <div className="text-xs text-muted-foreground">Live preview</div>
+              <div className="mt-3 flex items-center gap-3">
+                <div
+                  className="h-14 w-14 rounded-full border border-foreground/20 shadow-[0_0_30px_-6px_rgba(0,0,0,0.65)]"
+                  style={{ background: `oklch(0.72 ${saturation} ${hue})` }}
+                />
+                <div>
+                  <div className="text-sm font-semibold text-foreground">
+                    App Accent
+                  </div>
+                  <div className="text-xs text-muted-foreground">{`oklch(0.72 ${saturation.toFixed(2)} ${Math.round(hue)})`}</div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-border/80 bg-card/60 p-3">
+                <div className="text-xs text-muted-foreground">Sample button</div>
+                <button
+                  type="button"
+                  className="mt-2 w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground"
+                >
+                  Primary Action
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-border/80 bg-card/60 p-3">
+                <div className="text-xs text-muted-foreground">Style mode</div>
+                <div className="mt-1 text-sm font-semibold text-foreground">
+                  {styleMode === "custom" ? "Custom" : activePreset.label}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {styleMode === "custom"
+                    ? `Tweaked from ${activePreset.label}`
+                    : activePreset.description}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-border/80 bg-card/60 p-3">
+                <div className="text-xs text-muted-foreground">Background</div>
+                <div className="mt-1 text-sm font-semibold text-foreground">
+                  {activeBackground.label}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {activeBackground.description}
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section className="mt-8 border-t border-border/70 pt-6">
+          <div className="flex items-center gap-2 text-primary">
+            <SlidersHorizontal size={16} />
+            <span className="text-xs font-semibold tracking-[0.18em] uppercase">
+              Background
+            </span>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-primary/70 bg-primary/12 px-3 py-3">
+            <div className="text-sm font-semibold text-foreground">
+              {AURORA_GRID_BACKGROUND.label}
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {AURORA_GRID_BACKGROUND.description}
+            </div>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              Automatic transition: Fusion on landing, Grid in dashboard.
+            </div>
+          </div>
+
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <label className="block space-y-2">
               <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <SlidersHorizontal size={12} />
-                  Motion speed
-                </span>
+                <span>Motion speed</span>
                 <span className="text-foreground">
                   {backgroundMotion.toFixed(2)}x
                 </span>
@@ -263,7 +313,10 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
                 max={1.5}
                 step={0.05}
                 value={backgroundMotion}
-                onChange={(event) => setMotion(Number(event.target.value))}
+                onChange={(event) => {
+                  markCustom();
+                  setMotion(Number(event.target.value));
+                }}
                 className="hue-slider h-3 w-full cursor-pointer appearance-none rounded-full outline-none"
                 style={{
                   background:
@@ -283,7 +336,10 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
                 max={1.35}
                 step={0.05}
                 value={intensity}
-                onChange={(event) => setIntensity(Number(event.target.value))}
+                onChange={(event) => {
+                  markCustom();
+                  setIntensity(Number(event.target.value));
+                }}
                 className="hue-slider h-3 w-full cursor-pointer appearance-none rounded-full outline-none"
                 style={{
                   background:
@@ -297,7 +353,10 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
             <input
               type="checkbox"
               checked={spotlight}
-              onChange={(event) => setSpotlight(event.target.checked)}
+              onChange={(event) => {
+                markCustom();
+                setSpotlight(event.target.checked);
+              }}
               className="h-4 w-4 rounded border-border bg-background"
             />
             Enable cursor spotlight overlay
@@ -311,14 +370,11 @@ export function SettingsPage({ embedded = false, onClose }: SettingsPageProps) {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => {
-                resetAccent();
-                resetBackground();
-              }}
+              onClick={resetVisualStyle}
               className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-background/35 px-3 py-2 text-xs font-medium text-foreground transition hover:bg-background/55"
             >
               <RotateCcw size={14} />
-              Reset visuals
+              Reset to Classic
             </button>
             {doneButton}
           </div>

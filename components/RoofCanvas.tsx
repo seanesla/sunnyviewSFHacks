@@ -27,6 +27,21 @@ function dist(a: Point, b: Point) {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
+function distPointToSegment(p: Point, a: Point, b: Point) {
+  const vx = b.x - a.x
+  const vy = b.y - a.y
+  const wx = p.x - a.x
+  const wy = p.y - a.y
+  const vv = vx * vx + vy * vy
+  const t = vv > 1e-9 ? (wx * vx + wy * vy) / vv : 0
+  const tt = Math.max(0, Math.min(1, t))
+  const x = a.x + tt * vx
+  const y = a.y + tt * vy
+  const dx = p.x - x
+  const dy = p.y - y
+  return { x, y, t: tt, d: Math.hypot(dx, dy) }
+}
+
 function nearestVertexIdx(p: Point, vertices: Point[], radius: number) {
   let bestIdx: number | null = null
   let best = Infinity
@@ -38,6 +53,26 @@ function nearestVertexIdx(p: Point, vertices: Point[], radius: number) {
     }
   }
   return bestIdx
+}
+
+function nearestEdgeInsertIdx(p: Point, vertices: Point[], radius: number) {
+  if (vertices.length < 2) return null
+  let bestIdx: number | null = null
+  let bestP: Point | null = null
+  let best = Infinity
+  const n = vertices.length
+  for (let i = 0; i < n; i++) {
+    const a = vertices[i]
+    const b = vertices[(i + 1) % n]
+    const hit = distPointToSegment(p, a, b)
+    if (hit.d <= radius && hit.d < best) {
+      best = hit.d
+      const insert = (i + 1) % n
+      bestIdx = insert === 0 ? n : insert
+      bestP = { x: hit.x, y: hit.y }
+    }
+  }
+  return bestIdx !== null && bestP ? { insertIdx: bestIdx, point: bestP } : null
 }
 
 function pointInPolygon(p: Point, polygon: Point[]) {
@@ -94,11 +129,22 @@ export function RoofCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const drawRef = useRef<() => void>(() => {})
-  const requestDrawRef = useRef<() => void>(() => {})
-  const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
+  const invalidateRef = useRef<() => void>(() => {})
   const drawRafRef = useRef<number | null>(null)
+  const canvasMetricsRef = useRef<{ width: number; height: number; dpr: number }>({
+    width: 0,
+    height: 0,
+    dpr: 0,
+  })
+  const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const [imageError, setImageError] = useState<{ src: string; message: string } | null>(null)
+
+  const downVertexIdxRef = useRef<number | null>(null)
+  const downPosRef = useRef<Point | null>(null)
+  const movedRef = useRef(false)
+  const tripleClickRef = useRef<{ idx: number; count: number; t: number } | null>(null)
 
   const [tool, setTool] = useState<"polygon" | "rectangle">("polygon")
   const [rectStart, setRectStart] = useState<Point | null>(null)
@@ -139,6 +185,14 @@ export function RoofCanvas({
     [internalSize.h, internalSize.w]
   )
 
+  const invalidate = useCallback(() => {
+    if (drawRafRef.current !== null) return
+    drawRafRef.current = window.requestAnimationFrame(() => {
+      drawRafRef.current = null
+      drawRef.current()
+    })
+  }, [])
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current
     const container = containerRef.current
@@ -146,8 +200,18 @@ export function RoofCanvas({
 
     const rect = container.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
-    canvas.width = Math.max(1, Math.floor(rect.width * dpr))
-    canvas.height = Math.max(1, Math.floor(rect.height * dpr))
+    const nextWidth = Math.max(1, Math.floor(rect.width * dpr))
+    const nextHeight = Math.max(1, Math.floor(rect.height * dpr))
+    const lastMetrics = canvasMetricsRef.current
+    if (
+      lastMetrics.width !== nextWidth ||
+      lastMetrics.height !== nextHeight ||
+      lastMetrics.dpr !== dpr
+    ) {
+      canvas.width = nextWidth
+      canvas.height = nextHeight
+      canvasMetricsRef.current = { width: nextWidth, height: nextHeight, dpr }
+    }
 
     const ctx = canvas.getContext("2d")
     if (!ctx) return
@@ -198,7 +262,7 @@ export function RoofCanvas({
             img = new Image()
             img.crossOrigin = "anonymous"
             img.src = `https://tile.openstreetmap.org/${z}/${wrappedX}/${clampedY}.png`
-            img.onload = () => requestDrawRef.current()
+            img.onload = () => invalidateRef.current()
             if (tileCacheRef.current.size >= MAX_TILE_CACHE_SIZE) {
               const oldestKey = tileCacheRef.current.keys().next().value
               if (oldestKey) tileCacheRef.current.delete(oldestKey)
@@ -460,30 +524,46 @@ export function RoofCanvas({
     drawRef.current = draw
   }, [draw])
 
-  const requestDraw = useCallback(() => {
-    if (drawRafRef.current !== null) return
-    drawRafRef.current = window.requestAnimationFrame(() => {
-      drawRafRef.current = null
-      drawRef.current()
-    })
-  }, [])
-
   useEffect(() => {
-    requestDrawRef.current = requestDraw
-  }, [requestDraw])
+    invalidateRef.current = invalidate
+  }, [invalidate])
 
   useEffect(() => {
     if (background.kind !== "image" || !imageSrc) {
       imgRef.current = null
+      invalidate()
       return
     }
+
+    let cancelled = false
     const img = new Image()
     img.onload = () => {
+      if (cancelled) return
       imgRef.current = img
-      requestDraw()
+      setImageError(null)
+      console.info("[roof-canvas] satellite image loaded", {
+        src: imageSrc,
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+      })
+      invalidate()
+    }
+    img.onerror = () => {
+      if (cancelled) return
+      imgRef.current = null
+      setImageError({
+        src: imageSrc,
+        message: "Satellite image failed to load. Check API/network and try again.",
+      })
+      console.error("[roof-canvas] satellite image failed", { src: imageSrc })
+      invalidate()
     }
     img.src = imageSrc
-  }, [background.kind, imageSrc, requestDraw])
+
+    return () => {
+      cancelled = true
+    }
+  }, [background.kind, imageSrc, invalidate])
 
   useEffect(() => {
     if (background.kind !== "osm") {
@@ -492,16 +572,16 @@ export function RoofCanvas({
   }, [background.kind])
 
   useEffect(() => {
-    requestDraw()
-  }, [requestDraw])
+    invalidate()
+  }, [draw, invalidate])
 
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => requestDraw())
+    const ro = new ResizeObserver(() => invalidate())
     ro.observe(el)
     return () => ro.disconnect()
-  }, [requestDraw])
+  }, [invalidate])
 
   useEffect(() => {
     return () => {
@@ -521,6 +601,10 @@ export function RoofCanvas({
       canvas.setPointerCapture(e.pointerId)
       const rect = container.getBoundingClientRect()
       const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
+
+      movedRef.current = false
+      downPosRef.current = { x: internal.x, y: internal.y }
+      downVertexIdxRef.current = null
 
       if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
         for (const c of candidatePolygons) {
@@ -542,7 +626,23 @@ export function RoofCanvas({
 
       if (closed) {
         const idx = nearestVertexIdx(internal, vertices, 12 / internal.scale)
-        if (idx !== null) setDraggingIdx(idx)
+        if (idx !== null) {
+          downVertexIdxRef.current = idx
+          setDraggingIdx(idx)
+          return
+        }
+
+        // Add a "breakpoint" by inserting a new vertex on the nearest edge.
+        if (tool === "polygon") {
+          const edge = nearestEdgeInsertIdx(internal, vertices, 10 / internal.scale)
+          if (edge) {
+            const next = vertices.slice()
+            next.splice(edge.insertIdx, 0, edge.point)
+            onVerticesChange?.(next)
+            setDraggingIdx(edge.insertIdx)
+            return
+          }
+        }
         return
       }
 
@@ -558,11 +658,17 @@ export function RoofCanvas({
       const rect = container.getBoundingClientRect()
       const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
 
+      if (!movedRef.current && downPosRef.current) {
+        const dx = internal.x - downPosRef.current.x
+        const dy = internal.y - downPosRef.current.y
+        if (dx * dx + dy * dy > 9) movedRef.current = true
+      }
+
       if (mode === "edit" && closed) {
         const idx = nearestVertexIdx(internal, vertices, 12 / internal.scale)
-        setHoverIdx(idx)
+        setHoverIdx((prev) => (prev === idx ? prev : idx))
       } else {
-        setHoverIdx(null)
+        setHoverIdx((prev) => (prev === null ? prev : null))
       }
 
       if (mode !== "edit") return
@@ -608,8 +714,34 @@ export function RoofCanvas({
       setRectStart(null)
       setRectEnd(null)
       setDraggingIdx(null)
+
+      // Triple-click a vertex to delete it.
+      if (mode === "edit" && closed && tool === "polygon") {
+        const idx = downVertexIdxRef.current
+        if (idx !== null && !movedRef.current) {
+          const now = Date.now()
+          const prev = tripleClickRef.current
+          const nextCount = prev && prev.idx === idx && now - prev.t < 900 ? prev.count + 1 : 1
+          tripleClickRef.current = { idx, count: nextCount, t: now }
+          if (nextCount >= 3) {
+            const next = vertices.slice()
+            next.splice(idx, 1)
+            tripleClickRef.current = null
+            downVertexIdxRef.current = null
+            downPosRef.current = null
+            movedRef.current = false
+            onVerticesChange?.(next)
+            if (next.length < 3) onClosedChange?.(false)
+            return
+          }
+        }
+      }
+
+      downVertexIdxRef.current = null
+      downPosRef.current = null
+      movedRef.current = false
     },
-    [drawingRect, mode, onClosedChange, onVerticesChange, rectEnd, rectStart, tool]
+    [closed, drawingRect, mode, onClosedChange, onVerticesChange, rectEnd, rectStart, tool, vertices]
   )
 
   const onDoubleClick = useCallback(() => {
@@ -623,13 +755,13 @@ export function RoofCanvas({
     <div className="space-y-2">
       {mode === "edit" && (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs text-muted-foreground">
-            {background.kind === "image"
-              ? "Satellite image: trace the usable roof area."
-              : background.kind === "osm"
-                ? "Map mode: OSM background."
-                : "Trace the usable roof polygon."}
-          </div>
+            <div className="text-xs text-muted-foreground">
+              {background.kind === "image"
+                ? "Satellite image: trace the usable roof area. Tip: triple-click a dot to delete it."
+                : background.kind === "osm"
+                  ? "Map mode: OSM background."
+                  : "Trace the usable roof polygon."}
+            </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -654,7 +786,7 @@ export function RoofCanvas({
                 className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
                 onClick={onAutoOutline}
                 disabled={background.kind !== "image" || autoOutlineBusy}
-                title={background.kind !== "image" ? "Auto-outline requires a screenshot upload." : "Auto-outline"}
+                title={background.kind !== "image" ? "Auto-outline requires an image." : "Auto-outline"}
               >
                 {autoOutlineBusy ? "Auto-outlining…" : "Auto-outline"}
               </button>
@@ -695,6 +827,11 @@ export function RoofCanvas({
           onPointerUp={onPointerUp}
           onDoubleClick={onDoubleClick}
         />
+        {background.kind === "image" && imageError?.src === imageSrc && (
+          <div className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-rose-300/35 bg-rose-500/15 px-3 py-2 text-[11px] text-rose-100 backdrop-blur">
+            {imageError.message}
+          </div>
+        )}
       </div>
     </div>
   )

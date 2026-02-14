@@ -48,6 +48,10 @@ NEXT_PUBLIC_CESIUM_ION_TOKEN=
 
 # Optional legacy components only
 NEXT_PUBLIC_MAPBOX_TOKEN=
+
+# Optional local Gemini route (`POST /api/panel-recommend`)
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ## How to use

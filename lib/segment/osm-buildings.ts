@@ -24,6 +24,80 @@ type OverpassElement = {
   members?: Array<{ role?: unknown; geometry?: Array<{ lat?: unknown; lon?: unknown }>; type?: unknown; ref?: unknown }>
 }
 
+type CacheEntry = { t: number; elements: OverpassElement[] }
+const MEM_TTL_MS = 10 * 60 * 1000
+
+function memCache() {
+  const g = globalThis as unknown as { __sunnyviewOverpassCache?: Map<string, CacheEntry> }
+  if (!g.__sunnyviewOverpassCache) g.__sunnyviewOverpassCache = new Map()
+  return g.__sunnyviewOverpassCache
+}
+
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.nchc.org.tw/api/interpreter",
+]
+
+function shouldRetryStatus(status: number) {
+  return status === 429 || status === 502 || status === 503 || status === 504
+}
+
+async function fetchOverpassQuery(opts: { query: string; signal?: AbortSignal }) {
+  const key = `q:${opts.query}`
+  const now = Date.now()
+  const mem = memCache()
+  const hit = mem.get(key)
+  if (hit && now - hit.t < MEM_TTL_MS) return hit.elements
+
+  let lastErr: Error | null = null
+
+  for (let attempt = 0; attempt < OVERPASS_ENDPOINTS.length; attempt++) {
+    const base = OVERPASS_ENDPOINTS[attempt]
+    const url = new URL(base)
+    url.searchParams.set("data", opts.query)
+
+    const ac = new AbortController()
+    const timeoutMs = 4500
+    const t = setTimeout(() => ac.abort(), timeoutMs)
+    const onAbort = () => ac.abort()
+    if (opts.signal) opts.signal.addEventListener("abort", onAbort, { once: true })
+
+    try {
+      const res = await fetch(url.toString(), {
+        signal: ac.signal,
+        headers: { accept: "application/json" },
+        cache: "no-store",
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => "")
+        const err = new Error(`Overpass failed (${res.status})${text ? `: ${text.slice(0, 120)}` : ""}`)
+        if (shouldRetryStatus(res.status)) {
+          lastErr = err
+          continue
+        }
+        throw err
+      }
+
+      const json = (await res.json().catch(() => null)) as any
+      const elements = Array.isArray(json?.elements) ? (json.elements as OverpassElement[]) : []
+      mem.set(key, { t: now, elements })
+      return elements
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error("Overpass request failed")
+      lastErr = err
+      // Try next endpoint on fetch abort/network errors.
+      continue
+    } finally {
+      clearTimeout(t)
+      if (opts.signal) opts.signal.removeEventListener("abort", onAbort)
+    }
+  }
+
+  if (lastErr) throw lastErr
+  throw new Error("Overpass request failed")
+}
+
 export type BuildingCandidate = {
   id: string
   tags: OverpassTagMap
@@ -104,14 +178,7 @@ export async function fetchOverpassBuildings(opts: {
   signal?: AbortSignal
 }): Promise<OverpassElement[]> {
   const q = `[out:json][timeout:10];nwr["building"](around:${Math.round(opts.radiusM)},${opts.lat},${opts.lng});out tags geom;`
-  const url = new URL("https://overpass-api.de/api/interpreter")
-  url.searchParams.set("data", q)
-
-  const res = await fetch(url.toString(), { signal: opts.signal, headers: { accept: "application/json" } })
-  if (!res.ok) throw new Error(`Overpass failed (${res.status})`)
-  const json = (await res.json().catch(() => null)) as any
-  const elements = Array.isArray(json?.elements) ? (json.elements as OverpassElement[]) : []
-  return elements
+  return await fetchOverpassQuery({ query: q, signal: opts.signal })
 }
 
 export async function fetchOverpassByOsmId(opts: {
@@ -121,13 +188,7 @@ export async function fetchOverpassByOsmId(opts: {
 }): Promise<OverpassElement[]> {
   const typ = opts.osmType
   const q = `[out:json][timeout:10];${typ}(${opts.osmId});out tags geom;`
-  const url = new URL("https://overpass-api.de/api/interpreter")
-  url.searchParams.set("data", q)
-  const res = await fetch(url.toString(), { signal: opts.signal, headers: { accept: "application/json" } })
-  if (!res.ok) throw new Error(`Overpass failed (${res.status})`)
-  const json = (await res.json().catch(() => null)) as any
-  const elements = Array.isArray(json?.elements) ? (json.elements as OverpassElement[]) : []
-  return elements
+  return await fetchOverpassQuery({ query: q, signal: opts.signal })
 }
 
 export async function fetchOverpassByHouseNumber(opts: {
@@ -141,13 +202,7 @@ export async function fetchOverpassByHouseNumber(opts: {
   const q =
     `[out:json][timeout:10];nwr["building"]["addr:housenumber"="${hn}"]` +
     `(around:${Math.round(opts.radiusM)},${opts.lat},${opts.lng});out tags geom;`
-  const url = new URL("https://overpass-api.de/api/interpreter")
-  url.searchParams.set("data", q)
-  const res = await fetch(url.toString(), { signal: opts.signal, headers: { accept: "application/json" } })
-  if (!res.ok) throw new Error(`Overpass failed (${res.status})`)
-  const json = (await res.json().catch(() => null)) as any
-  const elements = Array.isArray(json?.elements) ? (json.elements as OverpassElement[]) : []
-  return elements
+  return await fetchOverpassQuery({ query: q, signal: opts.signal })
 }
 
 function looksResidential(hints: AddressHints | null) {

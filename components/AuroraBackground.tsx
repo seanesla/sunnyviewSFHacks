@@ -24,13 +24,14 @@ const ORBS: OrbSpec[] = [
 interface AuroraBackgroundProps {
   motionScale?: number
   intensity?: number
+  active?: boolean
 }
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
 
-export function AuroraBackground({ motionScale = 1, intensity = 1 }: AuroraBackgroundProps) {
+export function AuroraBackground({ motionScale = 1, intensity = 1, active = true }: AuroraBackgroundProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
 
   const motionStrength = clamp(motionScale, 0.6, 1.5)
@@ -48,6 +49,8 @@ export function AuroraBackground({ motionScale = 1, intensity = 1 }: AuroraBackg
   )
 
   useLayoutEffect(() => {
+    if (!active) return
+
     const root = rootRef.current
     if (!root) return
 
@@ -187,7 +190,7 @@ export function AuroraBackground({ motionScale = 1, intensity = 1 }: AuroraBackg
     }, root)
 
     return () => ctx.revert()
-  }, [motionStrength, intensityStrength])
+  }, [active, motionStrength, intensityStrength])
 
   return (
     <div ref={rootRef} className="sv-bg" style={rootStyle} aria-hidden="true">

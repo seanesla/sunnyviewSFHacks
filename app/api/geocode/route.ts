@@ -530,10 +530,20 @@ export async function GET(req: NextRequest) {
     cacheSet(cacheKey, payload)
     return Response.json(payload, { status: 200 })
   } catch (e) {
-    if (signal.aborted) {
-      return Response.json({ error: "Geocoding timed out." }, { status: 504 })
-    }
-    return Response.json({ error: e instanceof Error ? e.message : "Geocoding failed." }, { status: 500 })
+    // Upstream providers (Esri / Nominatim) can rate-limit or transiently fail.
+    // Return a non-fatal payload so the UI can prompt the user to retry.
+    const msg = e instanceof Error ? e.message : "Geocoding failed."
+    const warning = signal.aborted
+      ? "Geocoding timed out. Please try again."
+      : "Geocoding is temporarily unavailable. Please try again in a moment."
+    return Response.json(
+      {
+        results: [],
+        warning,
+        error: msg,
+      },
+      { status: 200 }
+    )
   } finally {
     clearTimeout(timeoutId)
     ac.abort()

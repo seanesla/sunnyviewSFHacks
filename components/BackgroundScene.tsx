@@ -3,28 +3,42 @@
 import { AuroraBackground } from "@/components/AuroraBackground"
 import { MouseSpotlight } from "@/components/MouseSpotlight"
 import { PixelGrid } from "@/components/pixel-grid"
-import { PrismBackground } from "@/components/PrismBackground"
-import { useBackground } from "@/lib/background-context"
+import { type BackgroundMode, useBackground } from "@/lib/background-context"
+import { cn } from "@/lib/utils"
 
-export function BackgroundScene() {
-  const { mode, motion, intensity, spotlight } = useBackground()
+interface BackgroundSceneProps {
+  mode?: BackgroundMode
+  transitionMs?: number
+}
+
+export function BackgroundScene({ mode, transitionMs = 760 }: BackgroundSceneProps) {
+  const { mode: contextMode, motion, intensity, spotlight } = useBackground()
+  const activeMode = mode ?? contextMode
+  const gridMode = activeMode === "grid"
 
   return (
     <>
-      {(mode === "aurora" || mode === "fusion") && (
-        <AuroraBackground motionScale={motion} intensity={intensity} />
-      )}
+      <div
+        className={cn(
+          "pointer-events-none transition-opacity ease-[cubic-bezier(0.2,0.85,0.2,1)]",
+          gridMode ? "opacity-0" : "opacity-100"
+        )}
+        style={{ transitionDuration: `${transitionMs}ms` }}
+      >
+        <AuroraBackground motionScale={motion} intensity={intensity} active={!gridMode} />
+      </div>
 
-      {(mode === "grid" || mode === "fusion") && (
-        <PixelGrid
-          density={mode === "grid" ? 1.1 : 0.9}
-          intensity={intensity}
-          motion={motion}
-          className={mode === "fusion" ? "opacity-65" : undefined}
-        />
-      )}
-
-      {mode === "prism" && <PrismBackground motionScale={motion} intensity={intensity} />}
+      <PixelGrid
+        density={gridMode ? 1.1 : 0.9}
+        intensity={intensity}
+        motion={motion}
+        className={cn(
+          "transition-[opacity,filter] duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)]",
+          gridMode
+            ? "opacity-95 [filter:contrast(1.08)_brightness(0.84)]"
+            : "opacity-65 [filter:contrast(1)_brightness(1)]"
+        )}
+      />
 
       {spotlight ? <MouseSpotlight strength={intensity} /> : null}
     </>

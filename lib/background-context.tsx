@@ -1,10 +1,17 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 
 const BACKGROUND_STORAGE_KEY = "sunnyview-background-v1"
 
-export type BackgroundMode = "fusion" | "prism" | "aurora" | "grid"
+export type BackgroundMode = "fusion" | "grid"
 
 const DEFAULT_MODE: BackgroundMode = "fusion"
 const DEFAULT_MOTION = 1
@@ -21,8 +28,11 @@ function clamp(n: number, min: number, max: number): number {
 }
 
 function coerceMode(mode: unknown): BackgroundMode | null {
-  if (mode === "fusion" || mode === "prism" || mode === "aurora" || mode === "grid") {
-    return mode
+  if (mode === "grid") {
+    return "grid"
+  }
+  if (mode === "fusion" || mode === "prism" || mode === "aurora") {
+    return "fusion"
   }
   return null
 }
@@ -82,6 +92,7 @@ export function BackgroundProvider({ children }: { children: ReactNode }) {
   const [intensity, setIntensity] = useState(DEFAULT_INTENSITY)
   const [spotlight, setSpotlight] = useState(DEFAULT_SPOTLIGHT)
   const [hydrated, setHydrated] = useState(false)
+  const persistTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     const stored = readStoredBackground()
@@ -104,10 +115,33 @@ export function BackgroundProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated) return
 
+    if (persistTimeoutRef.current !== null) {
+      window.clearTimeout(persistTimeoutRef.current)
+      persistTimeoutRef.current = null
+    }
+
     const stored: StoredBackground = { mode, motion, intensity, spotlight }
-    window.localStorage.setItem(BACKGROUND_STORAGE_KEY, JSON.stringify(stored))
-    window.dispatchEvent(new CustomEvent("sunnyview:background-change", { detail: stored }))
+    persistTimeoutRef.current = window.setTimeout(() => {
+      persistTimeoutRef.current = null
+      window.localStorage.setItem(BACKGROUND_STORAGE_KEY, JSON.stringify(stored))
+    }, 220)
+
+    return () => {
+      if (persistTimeoutRef.current !== null) {
+        window.clearTimeout(persistTimeoutRef.current)
+        persistTimeoutRef.current = null
+      }
+    }
   }, [mode, motion, intensity, spotlight, hydrated])
+
+  useEffect(() => {
+    return () => {
+      if (persistTimeoutRef.current !== null) {
+        window.clearTimeout(persistTimeoutRef.current)
+        persistTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   function handleSetMotion(nextMotion: number) {
     setMotion(clamp(nextMotion, MOTION_MIN, MOTION_MAX))
