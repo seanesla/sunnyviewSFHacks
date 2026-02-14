@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import { Settings2 } from "lucide-react"
+import { ArrowLeft, Settings2 } from "lucide-react"
 import { QRCodeCanvas } from "qrcode.react"
 import { HeroSection } from "@/components/hero-section"
 import { GlobeStage } from "@/components/GlobeStage"
@@ -67,7 +67,6 @@ export function SunnyviewExperience() {
   const [entered, setEntered] = useState(false)
   const opened = phase !== "landing"
   const opening = phase === "opening"
-  const [focusEarth, setFocusEarth] = useState(false)
   const globeInteractive = phase === "app"
   const [panelsMounted, setPanelsMounted] = useState(false)
   const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup")
@@ -80,7 +79,6 @@ export function SunnyviewExperience() {
   function openApp() {
     if (phase !== "landing") return
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
-    setFocusEarth(false)
     setPhase("opening")
     window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 220)
     window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 900)
@@ -233,6 +231,11 @@ export function SunnyviewExperience() {
   const [showShare, setShowShare] = useState(false)
   const creatingProjectRef = useRef(false)
   const projectCreateFailedRef = useRef(false)
+
+  function returnToLanding() {
+    setShowShare(false)
+    setPhase("landing")
+  }
 
   useEffect(() => {
     if (!panelsMounted) return
@@ -651,7 +654,7 @@ export function SunnyviewExperience() {
         lng={lng}
         interactive={globeInteractive}
         onPrimaryClick={opened ? undefined : openApp}
-        dim={opened && !focusEarth}
+        dim={opened}
         className="z-[2]"
       />
 
@@ -659,7 +662,7 @@ export function SunnyviewExperience() {
         aria-hidden
         className={cn(
           "pointer-events-none absolute inset-0 z-[3] transition-opacity duration-700 motion-reduce:duration-0",
-          opened && !focusEarth ? "opacity-100" : "opacity-0"
+          opened ? "opacity-100" : "opacity-0"
         )}
       >
         <div className="dashboard-scrim dashboard-scrim-left absolute inset-y-0 left-0 hidden w-[38vw] lg:block" />
@@ -673,29 +676,27 @@ export function SunnyviewExperience() {
         </div>
       )}
 
-      <div className="absolute right-4 top-4 z-30 flex items-center gap-2 sm:right-5">
-        {opened && (
-          <button
-            type="button"
-            onClick={() => setFocusEarth((v) => !v)}
-            className={cn(
-              "inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium backdrop-blur-sm transition",
-              focusEarth
-                ? "border-primary/70 bg-primary/18 text-foreground"
-                : "border-border/70 bg-background/35 text-foreground hover:bg-background/55"
-            )}
-          >
-            {focusEarth ? "Exit Earth Focus" : "Focus Earth"}
-          </button>
-        )}
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
+        <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
+          {phase === "app" && (
+            <button
+              type="button"
+              onClick={returnToLanding}
+              className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/45 px-3.5 py-1.5 text-xs font-medium text-foreground transition hover:bg-background/65"
+            >
+              <ArrowLeft size={14} />
+              Back to landing
+            </button>
+          )}
 
-        <Link
-          href="/settings"
-          className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/35 px-3 py-1.5 text-xs font-medium text-foreground backdrop-blur-sm transition hover:bg-background/55"
-        >
-          <Settings2 size={14} />
-          Settings
-        </Link>
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-2 rounded-full border border-primary/65 bg-primary/18 px-4 py-1.5 text-xs font-semibold text-foreground shadow-[0_12px_28px_-16px_rgba(0,0,0,0.95)] backdrop-blur-sm transition hover:bg-primary/28"
+          >
+            <Settings2 size={14} />
+            Settings
+          </Link>
+        </div>
       </div>
 
       <div className="pointer-events-none relative z-20 h-full px-2 py-6 sm:px-3 sm:py-8 lg:px-4">
@@ -709,10 +710,7 @@ export function SunnyviewExperience() {
             )}
           >
             <aside
-              className={cn(
-                "pointer-events-auto relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                focusEarth && opened ? "pointer-events-none -translate-x-8 opacity-0 blur-md" : "translate-x-0 opacity-100 blur-0"
-              )}
+              className="pointer-events-auto relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0"
             >
               <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1">
                 <div
@@ -744,10 +742,7 @@ export function SunnyviewExperience() {
 
             {opened ? (
               <aside
-                className={cn(
-                  "pointer-events-auto min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                  focusEarth && opened ? "pointer-events-none translate-x-8 opacity-0 blur-md" : "translate-x-0 opacity-100 blur-0"
-                )}
+                className="pointer-events-auto min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0"
               >
                 <div className="h-full min-h-0 overflow-auto pl-1">
                   <div
@@ -775,10 +770,7 @@ export function SunnyviewExperience() {
 
             {opened ? (
               <div
-                className={cn(
-                  "pointer-events-auto absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity,filter] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                  focusEarth ? "pointer-events-none translate-y-[74%] opacity-40 blur-sm" : "translate-y-0 opacity-100 blur-0"
-                )}
+                className="pointer-events-auto absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity,filter] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0"
               >
                 <div className="glass-card mx-1 mb-2 overflow-hidden rounded-2xl">
                   <div className="flex items-center gap-2 border-b border-border/60 p-2">
