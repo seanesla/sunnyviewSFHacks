@@ -9,6 +9,9 @@ import { StaticMapPhoto } from "@/components/StaticMapPhoto"
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking"
 import { packPanelsDeterministic } from "@/components/PanelPacking"
 import { RoofCanvas } from "@/components/RoofCanvas"
+import { MouseSpotlight } from "@/components/MouseSpotlight"
+import { AuroraBackground } from "@/components/AuroraBackground"
+import { AnimatedNumber } from "@/components/AnimatedNumber"
 import { apiOrigin, apiUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -490,7 +493,7 @@ export function SunnyviewExperience() {
     <div className="space-y-4">
       <MapInput value={mapInput} onChange={setMapInput} />
 
-      <div className="rounded-xl border border-border bg-card/40 p-4 backdrop-blur-sm">
+      <div className="glass-card p-4">
         <div className="text-sm font-semibold text-foreground">Site + assumptions</div>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <label className="space-y-1">
@@ -566,34 +569,42 @@ export function SunnyviewExperience() {
   const rightPanel = (
     <div className="space-y-4">
       <StaticMapPhoto
-        className="rounded-xl border border-border bg-card/40 p-4 backdrop-blur-sm"
+        className="glass-card p-4"
         address={mapInput.kind === "address" ? mapInput.address : null}
         lat={lat}
         lng={lng}
         zoom={zoom}
       />
 
-      <div className="rounded-xl border border-border bg-card/40 p-4 backdrop-blur-sm">
+      <div className="glass-card p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-foreground">Results</div>
           <div className="text-xs text-muted-foreground">{estimate.source === "server" ? "Server estimate" : "Fallback"}</div>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
             <div className="text-xs text-muted-foreground">Panels</div>
-            <div className="mt-1 text-lg font-semibold text-foreground">{panelCount}</div>
+            <div className="mt-1 text-lg font-semibold text-foreground text-glow">
+              <AnimatedNumber value={panelCount} />
+            </div>
           </div>
-          <div className="rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
             <div className="text-xs text-muted-foreground">DC kW</div>
-            <div className="mt-1 text-lg font-semibold text-foreground">{dcKw.toFixed(1)}</div>
+            <div className="mt-1 text-lg font-semibold text-foreground text-glow">
+              <AnimatedNumber value={dcKw} formatFn={(n) => n.toFixed(1)} />
+            </div>
           </div>
-          <div className="rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
             <div className="text-xs text-muted-foreground">Annual kWh</div>
-            <div className="mt-1 text-lg font-semibold text-foreground">{Math.round(estimate.annualKwh).toLocaleString()}</div>
+            <div className="mt-1 text-lg font-semibold text-foreground text-glow">
+              <AnimatedNumber value={estimate.annualKwh} />
+            </div>
           </div>
-          <div className="rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
             <div className="text-xs text-muted-foreground">Annual CO₂ (kg)</div>
-            <div className="mt-1 text-lg font-semibold text-foreground">{Math.round(estimate.annualCo2Kg).toLocaleString()}</div>
+            <div className="mt-1 text-lg font-semibold text-foreground text-glow">
+              <AnimatedNumber value={estimate.annualCo2Kg} />
+            </div>
           </div>
         </div>
 
@@ -637,7 +648,7 @@ export function SunnyviewExperience() {
         )}
       </div>
 
-      <div className="rounded-xl border border-border bg-card/40 p-4 backdrop-blur-sm">
+      <div className="glass-card p-4">
         <div className="text-sm font-semibold text-foreground">Panel packing</div>
         <div className="mt-3 grid gap-3">
           <label className="space-y-1">
@@ -698,10 +709,11 @@ export function SunnyviewExperience() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1000px_700px_at_12%_18%,oklch(0.72_0.18_var(--accent-hue)_/_0.16),transparent_60%),radial-gradient(900px_650px_at_84%_26%,oklch(0.68_0.16_calc(var(--accent-hue)+50)_/_0.12),transparent_62%),radial-gradient(800px_520px_at_55%_88%,oklch(0.6_0.14_calc(var(--accent-hue)-70)_/_0.10),transparent_60%)]" />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/0 via-black/10 to-black/55" />
+      <AuroraBackground />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,20,0.10)_0%,rgba(3,8,20,0.14)_42%,rgba(3,8,20,0.28)_100%)]" />
+      <MouseSpotlight />
 
-      <div className="relative mx-auto h-full max-w-screen-2xl px-5 py-8 sm:px-6 sm:py-10 lg:px-8">
+      <div className="relative z-10 mx-auto h-full max-w-screen-2xl px-5 py-8 sm:px-6 sm:py-10 lg:px-8">
         <div className="grid h-full grid-rows-[1fr]">
           <div
             className={cn(
@@ -748,7 +760,8 @@ export function SunnyviewExperience() {
               <div
                 ref={globeCardRef}
                 className={cn(
-                  "relative h-[min(560px,62vh)] w-full rounded-2xl border border-border/60 bg-card/10 backdrop-blur-sm lg:h-[min(820px,84vh)]",
+                  "relative h-[min(560px,62vh)] w-full rounded-2xl border border-border/60 bg-card/20 lg:h-[min(820px,84vh)]",
+                  "gradient-border globe-glow-pulse",
                   "transition-[opacity,filter,box-shadow] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                   entered ? "opacity-100" : "opacity-0",
                   opened ? "blur-0" : "blur-0",
@@ -785,7 +798,7 @@ export function SunnyviewExperience() {
 
                 <div
                   className={cn(
-                    "pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur transition-[opacity,transform,filter] duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                    "pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground transition-[opacity,transform,filter] duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                     opened ? "translate-y-2 opacity-0 blur-sm" : "translate-y-0 opacity-100 blur-0"
                   )}
                 >
