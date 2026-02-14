@@ -10,6 +10,7 @@ export function GlobeStage({
   onPrimaryClick,
   dim,
   className,
+  onReadyChange,
 }: {
   lat: number | null
   lng: number | null
@@ -17,6 +18,7 @@ export function GlobeStage({
   onPrimaryClick?: () => void
   dim?: boolean
   className?: string
+  onReadyChange?: (ready: boolean) => void
 }) {
   return (
     <div className={cn("absolute inset-0", className)}>
@@ -28,6 +30,7 @@ export function GlobeStage({
         onPrimaryClick={onPrimaryClick}
         frame={false}
         variant="hero"
+        onReadyChange={onReadyChange}
         className="h-full w-full"
       />
 

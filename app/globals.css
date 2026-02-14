@@ -416,17 +416,13 @@
   mask-repeat: no-repeat;
   mask-position: center;
   mask-size: contain;
-  opacity: 0;
+  opacity: 0.24;
   clip-path: inset(0 100% 0 0);
   filter:
     drop-shadow(0 1px 0 oklch(1 0 0 / 0.24))
     drop-shadow(0 16px 28px oklch(0 0 0 / 0.6));
   transform-origin: 50% 50%;
   will-change: clip-path, opacity, transform;
-}
-
-.sv-loader__logo--ready {
-  opacity: 0.24;
 }
 
 .sv-loader__logo--animate {

@@ -15,6 +15,7 @@ export function GlobeView({
   onPrimaryClick,
   frame = true,
   variant = "app",
+  onReadyChange,
 }: {
   lat: number | null
   lng: number | null
@@ -24,6 +25,7 @@ export function GlobeView({
   onPrimaryClick?: () => void
   frame?: boolean
   variant?: "app" | "hero"
+  onReadyChange?: (ready: boolean) => void
 }) {
   const isHero = variant === "hero"
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -50,6 +52,7 @@ export function GlobeView({
     let startupTimer: number | null = null
     setReady(false)
     setError(null)
+    onReadyChange?.(false)
     ;(async () => {
       try {
         await new Promise<void>((resolve) => {
@@ -222,9 +225,12 @@ export function GlobeView({
         }
 
         setReady(true)
+        onReadyChange?.(true)
       } catch (e) {
+        if (cancelled) return
         const msg = e instanceof Error ? e.message : "Failed to load Cesium."
         setError(msg)
+        onReadyChange?.(true)
       }
     })()
 
@@ -262,7 +268,7 @@ export function GlobeView({
         // ignore
       }
     }
-  }, [isHero])
+  }, [isHero, onReadyChange])
 
   useEffect(() => {
     if (!ready) return

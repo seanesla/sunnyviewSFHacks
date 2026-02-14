@@ -6,6 +6,7 @@ import { QRCodeCanvas } from "qrcode.react";
 import { HeroSection } from "@/components/hero-section";
 import { GlobeStage } from "@/components/GlobeStage";
 import { MapInput, type MapInputResult } from "@/components/MapInput";
+import { SunnyviewLogoLoader } from "@/components/SunnyviewLogoLoader";
 import { SettingsPage } from "@/components/settings-page";
 import { StaticMapPhoto } from "@/components/StaticMapPhoto";
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking";
@@ -66,17 +67,28 @@ export function SunnyviewExperience() {
   const isMobile = useIsMobile();
   const [phase, setPhase] = useState<Phase>("landing");
   const [entered, setEntered] = useState(false);
+  const [startupMinElapsed, setStartupMinElapsed] = useState(false);
+  const [globeBootReady, setGlobeBootReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const opened = phase !== "landing";
   const opening = phase === "opening";
   const globeInteractive = phase === "app" && !settingsOpen;
+  const startupDone = startupMinElapsed && globeBootReady;
   const [panelsMounted, setPanelsMounted] = useState(false);
   const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup");
 
   useEffect(() => {
-    const t = window.setTimeout(() => setEntered(true), 30);
+    const reduceMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    const t = window.setTimeout(() => setStartupMinElapsed(true), reduceMotion ? 0 : 1050);
     return () => window.clearTimeout(t);
   }, []);
+
+  useEffect(() => {
+    if (!startupDone) return;
+    const t = window.setTimeout(() => setEntered(true), 30);
+    return () => window.clearTimeout(t);
+  }, [startupDone]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -794,11 +806,12 @@ export function SunnyviewExperience() {
         lng={lng}
         interactive={globeInteractive}
         onPrimaryClick={opened || settingsOpen ? undefined : openApp}
+        onReadyChange={setGlobeBootReady}
         dim={opened && !settingsOpen}
         className="z-[2]"
       />
 
-      {!settingsOpen && (
+      {startupDone && !settingsOpen && (
         <div
           aria-hidden
           className={cn(
@@ -812,13 +825,13 @@ export function SunnyviewExperience() {
         </div>
       )}
 
-      {!opened && !settingsOpen && (
+      {startupDone && !opened && !settingsOpen && (
         <div className="pointer-events-none absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
           Click the Earth
         </div>
       )}
 
-      {!settingsOpen && (
+      {startupDone && !settingsOpen && (
         <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
           <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/45 bg-primary/12 px-3 py-1.5 shadow-[0_10px_30px_-22px_rgba(0,0,0,0.95)]">
@@ -853,7 +866,7 @@ export function SunnyviewExperience() {
         </div>
       )}
 
-      {!settingsOpen && (
+      {startupDone && !settingsOpen && (
         <div className="pointer-events-none relative z-20 h-full px-2 py-6 sm:px-3 sm:py-8 lg:px-4">
           {!isMobile ? (
             <div
@@ -968,6 +981,16 @@ export function SunnyviewExperience() {
               ) : null}
             </div>
           )}
+        </div>
+      )}
+
+      {!startupDone && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-background">
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-[radial-gradient(120%_85%_at_50%_38%,rgba(11,20,40,0.85)_0%,rgba(6,10,22,0.92)_42%,rgba(0,0,0,0.98)_100%)]"
+          />
+          <SunnyviewLogoLoader className="relative z-[1]" />
         </div>
       )}
 
