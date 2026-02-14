@@ -14,6 +14,9 @@ These instructions apply to all work in this repository. Use them as the first s
 - No `AGENTS.md` existed before this file.
 - No `.cursor/rules`, `.cursorrules`, or `.github/copilot-instructions.md` files are present at this time.
 - There is no formal unit/e2e test script currently defined in `package.json`.
+- Implemented local route handlers in this repo: `/api/geocode`, `/api/static-map`.
+- Not implemented in this repo yet: `/api/projects`, `/api/estimate`, `/api/segment`, `/api/explain`, `/api/tts`.
+- make sure you label those missing backend routes as external dependencies in docs and PR notes.
 
 ## Build and verification commands
 
@@ -111,7 +114,8 @@ If lint/build fails, fix before committing.
 
 ## Environment and config
 
-- `NEXT_PUBLIC_MAPBOX_TOKEN` is required for map tiles.
+- `NEXT_PUBLIC_API_ORIGIN` is optional and only needed when pointing the frontend at an external backend.
+- `NEXT_PUBLIC_MAPBOX_TOKEN` is optional and only used by legacy components (for example `components/roof-canvas.tsx`).
 - Keep `.env` files local and untracked.
 - If adding new environment variables, document them here and in relevant files.
 

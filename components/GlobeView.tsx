@@ -27,11 +27,14 @@ export function GlobeView({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<import("cesium").Viewer | null>(null)
   const markerEntityRef = useRef<import("cesium").Entity | null>(null)
-  const spinRafRef = useRef<number | null>(null)
+  const clickSpinRafRef = useRef<number | null>(null)
+  const landingSpinRafRef = useRef<number | null>(null)
+  const landingSpinLastNowRef = useRef<number | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const isHero = variant === "hero"
+  const landingActive = !interactive && Boolean(onPrimaryClick)
   const hasLocation = Number.isFinite(lat ?? NaN) && Number.isFinite(lng ?? NaN)
   const locationLabel = useMemo(() => {
     if (!hasLocation) return "No location yet"
@@ -138,9 +141,14 @@ export function GlobeView({
         // ignore
       }
       ro = null
-      if (spinRafRef.current !== null) {
-        window.cancelAnimationFrame(spinRafRef.current)
-        spinRafRef.current = null
+      if (clickSpinRafRef.current !== null) {
+        window.cancelAnimationFrame(clickSpinRafRef.current)
+        clickSpinRafRef.current = null
+      }
+      if (landingSpinRafRef.current !== null) {
+        window.cancelAnimationFrame(landingSpinRafRef.current)
+        landingSpinRafRef.current = null
+        landingSpinLastNowRef.current = null
       }
       const v = viewerRef.current
       viewerRef.current = null
@@ -165,6 +173,60 @@ export function GlobeView({
     c.enableTilt = interactive
     c.enableLook = interactive
   }, [interactive, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    if (landingSpinRafRef.current !== null) {
+      window.cancelAnimationFrame(landingSpinRafRef.current)
+      landingSpinRafRef.current = null
+      landingSpinLastNowRef.current = null
+    }
+
+    if (!landingActive) return
+
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+    try {
+      viewer.camera.flyHome(reduceMotion ? 0 : 1)
+    } catch {
+      // ignore
+    }
+
+    if (reduceMotion) return
+
+    const speedRadPerSec = 0.03
+    const delayMs = 1050
+
+    const tick = (now: number) => {
+      const viewerNow = viewerRef.current
+      if (!viewerNow) return
+      const lastNow = landingSpinLastNowRef.current ?? now
+      const dt = Math.min(0.05, (now - lastNow) / 1000)
+      landingSpinLastNowRef.current = now
+      try {
+        viewerNow.camera.rotateRight(speedRadPerSec * dt)
+      } catch {
+        return
+      }
+      landingSpinRafRef.current = window.requestAnimationFrame(tick)
+    }
+
+    const startTimer = window.setTimeout(() => {
+      landingSpinLastNowRef.current = null
+      landingSpinRafRef.current = window.requestAnimationFrame(tick)
+    }, delayMs)
+
+    return () => {
+      window.clearTimeout(startTimer)
+      if (landingSpinRafRef.current !== null) {
+        window.cancelAnimationFrame(landingSpinRafRef.current)
+        landingSpinRafRef.current = null
+      }
+      landingSpinLastNowRef.current = null
+    }
+  }, [landingActive, ready])
 
   useEffect(() => {
     if (!ready) return
@@ -211,9 +273,15 @@ export function GlobeView({
       // ignore
     }
 
-    if (spinRafRef.current !== null) {
-      window.cancelAnimationFrame(spinRafRef.current)
-      spinRafRef.current = null
+    if (landingSpinRafRef.current !== null) {
+      window.cancelAnimationFrame(landingSpinRafRef.current)
+      landingSpinRafRef.current = null
+      landingSpinLastNowRef.current = null
+    }
+
+    if (clickSpinRafRef.current !== null) {
+      window.cancelAnimationFrame(clickSpinRafRef.current)
+      clickSpinRafRef.current = null
     }
 
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
@@ -232,7 +300,7 @@ export function GlobeView({
       const elapsed = now - start
       if (elapsed < delayMs) {
         lastNow = now
-        spinRafRef.current = window.requestAnimationFrame(tick)
+        clickSpinRafRef.current = window.requestAnimationFrame(tick)
         return
       }
       const t = Math.min(1, (elapsed - delayMs) / durationMs)
@@ -242,13 +310,13 @@ export function GlobeView({
       viewerNow.camera.rotateRight(velocity * dt)
 
       if (t >= 1) {
-        spinRafRef.current = null
+        clickSpinRafRef.current = null
         return
       }
-      spinRafRef.current = window.requestAnimationFrame(tick)
+      clickSpinRafRef.current = window.requestAnimationFrame(tick)
     }
 
-    spinRafRef.current = window.requestAnimationFrame(tick)
+    clickSpinRafRef.current = window.requestAnimationFrame(tick)
   }
 
   async function flyTo() {
@@ -264,10 +332,11 @@ export function GlobeView({
 
   useEffect(() => {
     if (!ready) return
+    if (!interactive) return
     if (!hasLocation) return
     void flyTo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, hasLocation, lat, lng])
+  }, [ready, interactive, hasLocation, lat, lng])
 
   return (
     <div

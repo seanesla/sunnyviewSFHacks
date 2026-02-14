@@ -6,6 +6,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import './globals.css'
 import { AccentProvider } from '@/lib/accent-context'
 import { BackgroundProvider } from '@/lib/background-context'
+import { RouteTransition } from '@/components/route-transition'
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
@@ -42,7 +43,9 @@ export default function RootLayout({
     <html lang="en">
       <body suppressHydrationWarning className={`font-sans antialiased`}>
         <BackgroundProvider>
-          <AccentProvider>{children}</AccentProvider>
+          <AccentProvider>
+            <RouteTransition>{children}</RouteTransition>
+          </AccentProvider>
         </BackgroundProvider>
         <Analytics />
       </body>

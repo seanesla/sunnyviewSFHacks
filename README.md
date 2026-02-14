@@ -10,6 +10,12 @@ In about 30 seconds, a user can:
 
 The goal is speed and clarity for climate action education, not full engineering-grade permitting output.
 
+## Documentation disclaimer
+
+- This repository is frontend-first. Only local API routes in `app/api/geocode` and `app/api/static-map` are implemented here.
+- Any feature marked as "Not implemented in this repo yet" depends on an external backend service.
+- make sure you treat those features as optional integrations when running this repo by itself.
+
 ## SF Hacks 2026 context
 
 - Event: SF Hacks 2026
@@ -37,9 +43,9 @@ Some advanced features are designed to work with an external backend (see "Optio
 | Roof tracing + panel packing | Yes | Runs locally in-browser for fast interaction. |
 | Live fallback energy and CO2 estimates | Yes | Uses local fallback math if server estimate is unavailable. |
 | 3D globe visualization | Yes | Uses Cesium and Esri imagery by default. |
-| Project save + share QR link | Needs backend | Requires project endpoints and `NEXT_PUBLIC_API_ORIGIN`. |
-| AI explain, TTS narration, auto-outline | Needs backend | Requires `/api/explain`, `/api/tts`, `/api/segment`. |
-| Server-side solar estimate endpoint | Needs backend | Requires `/api/estimate`. |
+| Project save + share QR link | Not implemented in this repo yet | make sure you provide `/api/projects`, `/api/projects/:id`, and `/s/:shareSlug` in an external backend and set `NEXT_PUBLIC_API_ORIGIN`. |
+| AI explain, TTS narration, auto-outline | Not implemented in this repo yet | make sure you provide `/api/explain`, `/api/tts`, and `/api/segment` in an external backend. |
+| Server-side solar estimate endpoint | Not implemented in this repo yet | make sure you provide `/api/estimate` in an external backend. |
 
 ## Tech stack
 
@@ -120,9 +126,11 @@ npm run build
 
 There is currently no `npm test` script configured in this repo.
 
-## Optional backend integration
+## Optional backend integration (not implemented in this repo yet)
 
 If you set `NEXT_PUBLIC_API_ORIGIN`, the frontend will call these backend endpoints for full functionality:
+
+make sure you implement these endpoints in that backend before enabling full demo mode:
 
 - `POST /api/projects`
 - `PATCH /api/projects/:id`
@@ -177,6 +185,7 @@ Target tracks:
 - Estimates are directional, not a permit-ready engineering report.
 - Accuracy depends on roof trace quality and scale calibration.
 - Without an external backend, sharing and AI endpoints are disabled gracefully.
+- Auto-outline and server-side estimate calls are fallback/no-op unless backend endpoints are available.
 
 ## Acknowledgements
 

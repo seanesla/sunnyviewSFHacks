@@ -191,6 +191,21 @@ export function SunnyviewExperience() {
     return () => window.clearTimeout(t)
   }, [])
 
+  useEffect(() => {
+    if (phase !== "landing") return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("view") !== "app") return
+
+    setPanelsMounted(true)
+    setEntered(true)
+    setPhase("app")
+
+    params.delete("view")
+    const nextQuery = params.toString()
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`
+    window.history.replaceState(window.history.state, "", nextUrl)
+  }, [phase])
+
   function openApp() {
     if (phase !== "landing") return
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
@@ -951,7 +966,7 @@ export function SunnyviewExperience() {
       <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
         <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/45 bg-primary/12 px-3 py-1.5 shadow-[0_10px_30px_-22px_rgba(0,0,0,0.95)]">
-            <span className="text-[10px] font-semibold tracking-[0.24em] text-foreground uppercase">Sunnywise</span>
+            <span className="text-[10px] font-semibold tracking-[0.24em] text-foreground uppercase">Sunnyview</span>
           </div>
 
           {phase === "app" && (

@@ -1,5 +1,15 @@
 ## Team Task Distribution (Backend only)
 
+> Disclaimer (implementation status)
+> - This file is a backend implementation plan.
+> - The routes and helpers listed below are not implemented in this repository right now.
+> - make sure you treat this as an external backend checklist, not current local functionality.
+
+### Current backend status in this repo
+
+- Implemented here: `/api/geocode`, `/api/static-map`
+- Not implemented here: `/api/projects`, `/api/estimate`, `/api/segment`, `/api/explain`, `/api/tts`, `/s/:shareSlug` JSON route
+
 ### Backend 1
 **Owns:** Projects + DB + share links + glue
 - Create Mongo connection + project schema helpers
@@ -28,7 +38,7 @@
 npm i zod mongodb nanoid
 # optional caching
 npm i @upstash/redis
-````
+```
 
 ### 2) Add `.env.local`
 
@@ -780,8 +790,3 @@ Backend is “done” when:
 * Segment returns stub polygon (real FastAPI optional)
 
 ---
-
-```
-
-If you want, I can also generate a **second markdown** that’s just an “API Contract” table (request/response examples) so frontend integration is dead simple.
-```

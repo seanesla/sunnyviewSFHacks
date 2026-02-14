@@ -2,6 +2,13 @@
 
 Last updated: 2026-02-12
 
+## Implementation status disclaimer
+
+- This document mixes current architecture and planned architecture for the hackathon roadmap.
+- Implemented in this repository now: frontend experience, `GET /api/geocode`, and `GET /api/static-map`.
+- Not implemented in this repository now: `POST /api/projects`, `GET/PATCH /api/projects/:id`, `POST /api/estimate`, `POST /api/segment`, `POST /api/explain`, `POST /api/tts`, and `GET /s/:shareSlug` JSON endpoint.
+- make sure you treat those missing routes and AI/storage services as external backend dependencies.
+
 ## 0. What we are building
 
 sunnyview is a 30-second solar feasibility demo:
@@ -205,7 +212,9 @@ Why this wins for demo:
 - Produce share links and PDF snapshots
 - Centralize rate limiting
 
-### 6.2 Endpoints (proposed)
+### 6.2 Endpoints (proposed external dependencies)
+
+make sure you read this section as planned backend API contracts, not routes implemented in this repo today.
 
 #### Projects
 - `POST /api/projects`
