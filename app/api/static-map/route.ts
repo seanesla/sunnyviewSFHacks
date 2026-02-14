@@ -86,6 +86,111 @@ async function geocodeAddress(address: string, signal: AbortSignal) {
   return out
 }
 
+type ImageFetchResult =
+  | { ok: true; body: ArrayBuffer; contentType: string; durationMs: number }
+  | {
+      ok: false
+      durationMs: number
+      status: number
+      kind: "fetch" | "http" | "non-image" | "empty"
+      details: string
+      contentType?: string
+    }
+
+async function fetchUpstreamImage(url: URL, signal: AbortSignal): Promise<ImageFetchResult> {
+  const startedAt = Date.now()
+  let res: Response
+
+  try {
+    res = await fetch(url.toString(), {
+      signal,
+      headers: { accept: "image/*" },
+      cache: "no-store",
+    })
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Fetch failed"
+    return {
+      ok: false,
+      durationMs: Date.now() - startedAt,
+      status: 0,
+      kind: "fetch",
+      details: message,
+    }
+  }
+
+  const durationMs = Date.now() - startedAt
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    return {
+      ok: false,
+      durationMs,
+      status: res.status,
+      kind: "http",
+      details: text.slice(0, 500),
+      contentType: res.headers.get("content-type") ?? "",
+    }
+  }
+
+  const contentTypeRaw = res.headers.get("content-type") ?? ""
+  const contentType = contentTypeRaw.toLowerCase()
+  if (!contentType.startsWith("image/")) {
+    const text = await res.text().catch(() => "")
+    return {
+      ok: false,
+      durationMs,
+      status: 502,
+      kind: "non-image",
+      details: text.slice(0, 500),
+      contentType: contentTypeRaw,
+    }
+  }
+
+  const body = await res.arrayBuffer()
+  if (!body.byteLength) {
+    return {
+      ok: false,
+      durationMs,
+      status: 502,
+      kind: "empty",
+      details: "Provider returned an empty image body",
+      contentType: contentTypeRaw,
+    }
+  }
+
+  return {
+    ok: true,
+    body,
+    contentType: contentTypeRaw || "image/png",
+    durationMs,
+  }
+}
+
+function buildArcgisStaticUrl(params: { bbox: string; outW: number; outH: number }) {
+  const url = new URL("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export")
+  url.searchParams.set("bbox", params.bbox)
+  url.searchParams.set("bboxSR", "3857")
+  url.searchParams.set("imageSR", "3857")
+  url.searchParams.set("size", `${params.outW},${params.outH}`)
+  url.searchParams.set("format", "png32")
+  url.searchParams.set("f", "image")
+  return url
+}
+
+function buildMapboxStaticUrl(params: {
+  lat: number
+  lng: number
+  zoom: number
+  outW: number
+  outH: number
+  token: string
+}) {
+  const center = `${params.lng.toFixed(6)},${params.lat.toFixed(6)},${Math.round(params.zoom)},0`
+  const size = `${Math.round(params.outW)}x${Math.round(params.outH)}`
+  return new URL(
+    `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${center}/${size}?access_token=${encodeURIComponent(params.token)}`
+  )
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
 
@@ -141,71 +246,90 @@ export async function GET(req: NextRequest) {
     const halfHm = (resMPerPx * h) / 2
     const bbox = `${(x - halfWm).toFixed(6)},${(y - halfHm).toFixed(6)},${(x + halfWm).toFixed(6)},${(y + halfHm).toFixed(6)}`
 
-    const staticUrl = new URL("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export")
-    staticUrl.searchParams.set("bbox", bbox)
-    staticUrl.searchParams.set("bboxSR", "3857")
-    staticUrl.searchParams.set("imageSR", "3857")
-    staticUrl.searchParams.set("size", `${outW},${outH}`)
-    staticUrl.searchParams.set("format", "png32")
-    staticUrl.searchParams.set("f", "image")
+    let lastFailure: ImageFetchResult | null = null
+    const arcgisAttempts = [
+      { outW, outH, label: `scale-${scale}` },
+      ...(scale > 1 ? [{ outW: w, outH: h, label: "scale-1-fallback" }] : []),
+    ]
 
-    const startedAt = Date.now()
-    const imgRes = await fetch(staticUrl.toString(), { signal, headers: { accept: "image/*" }, cache: "no-store" })
-    const durationMs = Date.now() - startedAt
+    for (const attempt of arcgisAttempts) {
+      const url = buildArcgisStaticUrl({ bbox, outW: attempt.outW, outH: attempt.outH })
+      const img = await fetchUpstreamImage(url, signal)
+      if (img.ok) {
+        console.info(`${LOG_PREFIX} success`, {
+          provider: "arcgis",
+          attempt: attempt.label,
+          durationMs: img.durationMs,
+          bytes: img.body.byteLength,
+          contentType: img.contentType,
+          lat: Number(lat.toFixed(6)),
+          lng: Number(lng.toFixed(6)),
+          zoom,
+        })
+        return new Response(img.body, {
+          status: 200,
+          headers: {
+            "content-type": img.contentType,
+            "cache-control": "public, max-age=86400, s-maxage=86400",
+            "x-static-map-provider": "arcgis",
+            "x-static-map-attempt": attempt.label,
+          },
+        })
+      }
 
-    if (!imgRes.ok) {
-      const text = await imgRes.text().catch(() => "")
-      console.warn(`${LOG_PREFIX} upstream non-200`, {
-        status: imgRes.status,
-        durationMs,
-        details: text.slice(0, 220),
+      lastFailure = img
+      console.warn(`${LOG_PREFIX} arcgis failed`, {
+        attempt: attempt.label,
+        kind: img.kind,
+        status: img.status,
+        durationMs: img.durationMs,
+        contentType: img.contentType ?? "",
+        details: img.details.slice(0, 220),
       })
-      return Response.json(
-        { error: `Static image failed (${imgRes.status})`, details: text.slice(0, 500) },
-        { status: 502 }
-      )
     }
 
-    const contentTypeRaw = imgRes.headers.get("content-type") ?? ""
-    const contentType = contentTypeRaw.toLowerCase()
-    if (!contentType.startsWith("image/")) {
-      const text = await imgRes.text().catch(() => "")
-      console.warn(`${LOG_PREFIX} non-image response`, {
-        contentType: contentTypeRaw,
-        durationMs,
-        details: text.slice(0, 220),
+    const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN?.trim() ?? ""
+    if (mapboxToken) {
+      const mapboxUrl = buildMapboxStaticUrl({ lat, lng, zoom, outW, outH, token: mapboxToken })
+      const mapboxImage = await fetchUpstreamImage(mapboxUrl, signal)
+      if (mapboxImage.ok) {
+        console.info(`${LOG_PREFIX} success`, {
+          provider: "mapbox",
+          durationMs: mapboxImage.durationMs,
+          bytes: mapboxImage.body.byteLength,
+          contentType: mapboxImage.contentType,
+          lat: Number(lat.toFixed(6)),
+          lng: Number(lng.toFixed(6)),
+          zoom,
+        })
+        return new Response(mapboxImage.body, {
+          status: 200,
+          headers: {
+            "content-type": mapboxImage.contentType,
+            "cache-control": "public, max-age=86400, s-maxage=86400",
+            "x-static-map-provider": "mapbox",
+          },
+        })
+      }
+
+      lastFailure = mapboxImage
+      console.warn(`${LOG_PREFIX} mapbox fallback failed`, {
+        kind: mapboxImage.kind,
+        status: mapboxImage.status,
+        durationMs: mapboxImage.durationMs,
+        contentType: mapboxImage.contentType ?? "",
+        details: mapboxImage.details.slice(0, 220),
       })
-      return Response.json(
-        {
-          error: "Static map provider returned a non-image response.",
-          details: text.slice(0, 500),
-        },
-        { status: 502 }
-      )
     }
 
-    const body = await imgRes.arrayBuffer()
-    if (!body.byteLength) {
-      console.warn(`${LOG_PREFIX} empty image body`, { durationMs })
-      return Response.json({ error: "Static map provider returned an empty image." }, { status: 502 })
-    }
-
-    console.info(`${LOG_PREFIX} success`, {
-      durationMs,
-      bytes: body.byteLength,
-      contentType: contentTypeRaw,
-      lat: Number(lat.toFixed(6)),
-      lng: Number(lng.toFixed(6)),
-      zoom,
-    })
-
-    return new Response(body, {
-      status: 200,
-      headers: {
-        "content-type": contentTypeRaw || "image/png",
-        "cache-control": "public, max-age=86400, s-maxage=86400",
+    const status = lastFailure && lastFailure.status > 0 ? 502 : 500
+    return Response.json(
+      {
+        error: "Static map providers unavailable.",
+        details: lastFailure?.details ?? "No provider response",
       },
-    })
+      { status }
+    )
   } catch (e) {
     const message = e instanceof Error ? e.message : "Static map failed."
     const timedOut = signal.aborted

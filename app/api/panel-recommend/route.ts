@@ -66,11 +66,7 @@ function tryParseJson(s: string) {
 }
 
 export async function POST(req: Request) {
-  const key = process.env.GEMINI_API_KEY?.trim()
-  if (!key) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 501 })
-  }
-
+  const key = process.env.GEMINI_API_KEY?.trim() || ""
   const configuredModel = process.env.GEMINI_MODEL?.trim() || ""
   const modelsToTry = uniqueModels([
     configuredModel,
@@ -87,6 +83,56 @@ export async function POST(req: Request) {
 
   const { lat, lng, roofAreaM2, options, currentId, notes } = parsed.data
   const loc = lat !== undefined && lng !== undefined ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : "unknown"
+
+  function fallbackRecommendation(reason: string, attemptedModels: string[] = []) {
+    const ranked = options
+      .map((o) => ({
+        opt: o,
+        dcKw: Number(o.fit?.dcKw ?? 0),
+        panelCount: Number(o.fit?.panelCount ?? 0),
+      }))
+      .sort((a, b) => (b.dcKw !== a.dcKw ? b.dcKw - a.dcKw : b.panelCount - a.panelCount))
+
+    const current = currentId ? options.find((o) => o.id === currentId) : null
+    const best = ranked[0]?.opt ?? options[0]
+    const selected = current ?? best
+    const dcKw = Number(selected.fit?.dcKw ?? 0)
+    const panelCount = Number(selected.fit?.panelCount ?? 0)
+
+    const why = [
+      `Picked ${selected.brand} ${selected.model} using a local fallback rule because Gemini was unavailable.`,
+      `This option currently fits about ${panelCount} panels (${dcKw.toFixed(1)} kW DC) for your traced roof.`,
+      "You can still switch models manually if local installer pricing or stock favors another panel.",
+    ]
+    const caveats = [
+      "AI recommendation is temporarily unavailable; this is a deterministic fallback.",
+      "Always confirm final panel choice with installer pricing, permits, and shading checks.",
+    ]
+
+    console.warn(`${LOG_PREFIX} fallback`, {
+      reason,
+      selectedId: selected.id,
+      attemptedModels,
+    })
+
+    return NextResponse.json(
+      {
+        selectedId: selected.id,
+        brand: selected.brand,
+        model: selected.model,
+        why,
+        caveats,
+        usedModel: "local-fallback",
+        fallbackReason: reason,
+        attemptedModels,
+      },
+      { status: 200 }
+    )
+  }
+
+  if (!key) {
+    return fallbackRecommendation("Missing GEMINI_API_KEY")
+  }
 
   console.info(`${LOG_PREFIX} request`, {
     location: loc,
@@ -175,9 +221,9 @@ No extra keys, no markdown.`
         status: res.status,
         message: msg.slice(0, 240),
       })
-      const canRetryModel = res.status === 404 || MODEL_NOT_FOUND_RE.test(msg)
+      const canRetryModel = res.status === 404 || res.status === 429 || MODEL_NOT_FOUND_RE.test(msg)
       if (canRetryModel) continue
-      return NextResponse.json({ error: msg, attemptedModels }, { status: 502 })
+      return fallbackRecommendation(msg, attemptedModels)
     }
 
     const text = extractText(json)
@@ -198,14 +244,7 @@ No extra keys, no markdown.`
         hasBrand: !!brand,
         hasModel: !!model,
       })
-      return NextResponse.json(
-        {
-          error: "Failed to parse Gemini JSON",
-          attemptedModels,
-          raw: text.slice(0, 800),
-        },
-        { status: 502 }
-      )
+      return fallbackRecommendation("Failed to parse Gemini JSON", attemptedModels)
     }
 
     console.info(`${LOG_PREFIX} success`, {
@@ -228,11 +267,5 @@ No extra keys, no markdown.`
     )
   }
 
-  return NextResponse.json(
-    {
-      error: lastUpstreamError,
-      attemptedModels,
-    },
-    { status: 502 }
-  )
+  return fallbackRecommendation(lastUpstreamError, attemptedModels)
 }
