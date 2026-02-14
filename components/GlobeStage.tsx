@@ -1,0 +1,45 @@
+"use client"
+
+import { GlobeView } from "@/components/GlobeView"
+import { cn } from "@/lib/utils"
+
+export function GlobeStage({
+  lat,
+  lng,
+  interactive,
+  onPrimaryClick,
+  dim,
+  className,
+}: {
+  lat: number | null
+  lng: number | null
+  interactive: boolean
+  onPrimaryClick?: () => void
+  dim?: boolean
+  className?: string
+}) {
+  return (
+    <div className={cn("absolute inset-0", className)}>
+      <GlobeView
+        lat={lat}
+        lng={lng}
+        showUi={false}
+        interactive={interactive}
+        onPrimaryClick={onPrimaryClick}
+        frame={false}
+        variant="hero"
+        className="h-full w-full"
+      />
+
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-0 transition-opacity duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+          dim ? "opacity-[0.85]" : "opacity-100"
+        )}
+      >
+        <div className="earth-vignette absolute inset-0" />
+      </div>
+    </div>
+  )
+}

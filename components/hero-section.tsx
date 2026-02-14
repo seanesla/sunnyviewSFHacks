@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowRight } from "lucide-react"
+import { ScrambleText } from "@/components/ScrambleText"
 
 interface HeroSectionProps {
   onStart: () => void
@@ -19,13 +20,15 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       }}
     >
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium tracking-widest text-primary uppercase">
+        <span className="text-sm font-light tracking-[0.2em] text-primary uppercase">
           Solar Feasibility in 30 Seconds
         </span>
-        <h1 className="text-balance text-5xl font-bold leading-tight tracking-tight text-foreground lg:text-6xl">
-          Trace a roof.
+        <h1 className="text-balance text-5xl font-extralight leading-tight tracking-tight text-foreground lg:text-7xl">
+          <ScrambleText text="Trace a roof." trigger={visible} />
           <br />
-          <span className="text-primary">See the potential.</span>
+          <span className="text-primary text-glow">
+            <ScrambleText text="See the potential." trigger={visible} speed={45} />
+          </span>
         </h1>
       </div>
 
@@ -38,7 +41,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <button
           onClick={onStart}
-          className="group flex h-12 items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:gap-3"
+          className="group flex h-12 items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:gap-3 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-primary/20"
         >
           Launch Demo
           <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
@@ -48,12 +51,12 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         </span>
       </div>
 
-      {/* placeholder image areas */}
+      {/* preview cards */}
       <div className="mt-4 flex gap-3">
         {["Panel Layout", "Energy Report", "Share QR"].map(label => (
           <div
             key={label}
-            className="flex h-20 w-28 items-center justify-center rounded-lg border border-dashed border-border bg-card/50"
+            className="glass-card gradient-border flex h-20 w-28 items-center justify-center"
           >
             <span className="text-[10px] text-muted-foreground">{label}</span>
           </div>

@@ -438,7 +438,7 @@ export function RoofCanvas({
         </div>
       )}
 
-      <div ref={containerRef} className="relative h-[520px] w-full overflow-hidden rounded-xl border border-border bg-card">
+      <div ref={containerRef} className="glass-surface relative h-[340px] w-full overflow-hidden rounded-xl sm:h-[440px] lg:h-[520px]">
         <canvas
           ref={canvasRef}
           className={`absolute inset-0 h-full w-full ${mode === "edit" ? "cursor-crosshair" : "cursor-default"}`}

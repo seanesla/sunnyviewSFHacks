@@ -18,5 +18,8 @@ node_modules/
 .next/
 *.tsbuildinfo
 dev.log
+.next-dev.log
+.next-dev.pid
 .env*.local
 .DS_Store
+CLAUDE.md
