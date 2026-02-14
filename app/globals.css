@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --accent-hue: 200;
+  --accent-sat: 0.18;
+
+  --background: oklch(0.12 0 0);
+  --foreground: oklch(0.95 0 0);
+  --card: oklch(0.16 0.005 var(--accent-hue));
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.16 0.005 var(--accent-hue));
+  --popover-foreground: oklch(0.95 0 0);
+  --primary: oklch(0.7 var(--accent-sat) var(--accent-hue));
+  --primary-foreground: oklch(0.12 0.02 var(--accent-hue));
+  --secondary: oklch(0.22 0.01 var(--accent-hue));
+  --secondary-foreground: oklch(0.9 0 0);
+  --muted: oklch(0.22 0.008 var(--accent-hue));
+  --muted-foreground: oklch(0.65 0 0);
+  --accent: oklch(0.22 0.015 var(--accent-hue));
+  --accent-foreground: oklch(0.95 0 0);
+  --destructive: oklch(0.55 0.22 27);
+  --destructive-foreground: oklch(0.95 0 0);
+  --border: oklch(0.28 0.01 var(--accent-hue));
+  --input: oklch(0.24 0.01 var(--accent-hue));
+  --ring: oklch(0.6 var(--accent-sat) var(--accent-hue));
+  --chart-1: oklch(0.7 var(--accent-sat) var(--accent-hue));
+  --chart-2: oklch(0.65 0.15 calc(var(--accent-hue) + 40));
+  --chart-3: oklch(0.55 0.12 calc(var(--accent-hue) + 80));
+  --chart-4: oklch(0.75 0.14 calc(var(--accent-hue) - 40));
+  --chart-5: oklch(0.6 0.16 calc(var(--accent-hue) - 80));
+  --radius: 0.625rem;
+  --sidebar: oklch(0.14 0.005 var(--accent-hue));
+  --sidebar-foreground: oklch(0.95 0 0);
+  --sidebar-primary: oklch(0.7 var(--accent-sat) var(--accent-hue));
+  --sidebar-primary-foreground: oklch(0.12 0.02 var(--accent-hue));
+  --sidebar-accent: oklch(0.22 0.015 var(--accent-hue));
+  --sidebar-accent-foreground: oklch(0.95 0 0);
+  --sidebar-border: oklch(0.28 0.01 var(--accent-hue));
+  --sidebar-ring: oklch(0.6 var(--accent-sat) var(--accent-hue));
+}
+
+@theme inline {
+  --font-sans: 'Geist', 'Geist Fallback';
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Landing hero: keep Cesium canvas fully transparent so the page background is in control. */
+.globe-hero .cesium-widget,
+.globe-hero .cesium-widget canvas,
+.globe-hero .cesium-viewer,
+.globe-hero .cesium-viewer-cesiumWidgetContainer {
+  background: transparent !important;
+}
+
+.globe-hero .cesium-widget-credits {
+  background: transparent !important;
+  opacity: 0.72;
+  transition: opacity 200ms ease;
+}
+.globe-hero .cesium-widget-credits:hover {
+  opacity: 1;
+}
+.globe-hero .cesium-widget-credits a {
+  color: color-mix(in oklch, var(--foreground) 72%, transparent) !important;
+}
+
+/* Hue slider thumb */
+.hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: oklch(0.95 0 0);
+  border: 2px solid oklch(0.2 0 0);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.hue-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: oklch(0.95 0 0);
+  border: 2px solid oklch(0.2 0 0);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}

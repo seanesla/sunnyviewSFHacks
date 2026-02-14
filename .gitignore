@@ -1,0 +1,22 @@
+.venv/
+.venv311/
+__pycache__/
+*.pyc
+
+build/
+dist/
+
+models/*.task
+
+# v0 runtime files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+
+# Node / Next.js
+node_modules/
+.next/
+*.tsbuildinfo
+dev.log
+.env*.local
+.DS_Store
