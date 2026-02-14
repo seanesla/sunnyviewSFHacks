@@ -40,7 +40,7 @@ function MetricCard({ icon, label, value, suffix, decimals = 0 }: MetricCardProp
   const animated = useAnimatedValue(value)
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card p-4">
+    <div className="glass-surface flex items-start gap-3 rounded-lg p-4">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
         {icon}
       </div>

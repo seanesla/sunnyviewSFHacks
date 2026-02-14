@@ -40,6 +40,7 @@ export function GlobeView({
 
   useEffect(() => {
     let cancelled = false
+    let ro: ResizeObserver | null = null
     ;(async () => {
       try {
         const Cesium: CesiumModule = await import("cesium")
@@ -69,7 +70,7 @@ export function GlobeView({
           navigationHelpButton: false,
           fullscreenButton: false,
           infoBox: false,
-          selectionIndicator: showUi,
+          selectionIndicator: false,
           shouldAnimate: true,
           contextOptions: isHero ? ({ webgl: { alpha: true } } as any) : undefined,
         })
@@ -108,6 +109,20 @@ export function GlobeView({
         }
 
         viewerRef.current = viewer
+
+        ro = new ResizeObserver(() => {
+          try {
+            viewer.resize()
+          } catch {
+            // ignore
+          }
+        })
+        try {
+          ro.observe(el)
+        } catch {
+          // ignore
+        }
+
         setReady(true)
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load Cesium."
@@ -117,6 +132,12 @@ export function GlobeView({
 
     return () => {
       cancelled = true
+      try {
+        ro?.disconnect()
+      } catch {
+        // ignore
+      }
+      ro = null
       if (spinRafRef.current !== null) {
         window.cancelAnimationFrame(spinRafRef.current)
         spinRafRef.current = null
@@ -130,7 +151,7 @@ export function GlobeView({
         // ignore
       }
     }
-  }, [isHero, showUi])
+  }, [isHero])
 
   useEffect(() => {
     if (!ready) return

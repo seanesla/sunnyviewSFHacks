@@ -1,9 +1,11 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
+import { Settings2 } from "lucide-react"
 import { QRCodeCanvas } from "qrcode.react"
 import { HeroSection } from "@/components/hero-section"
-import { GlobeView } from "@/components/GlobeView"
+import { GlobeStage } from "@/components/GlobeStage"
 import { MapInput, type MapInputResult } from "@/components/MapInput"
 import { StaticMapPhoto } from "@/components/StaticMapPhoto"
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking"
@@ -12,6 +14,7 @@ import { RoofCanvas } from "@/components/RoofCanvas"
 import { MouseSpotlight } from "@/components/MouseSpotlight"
 import { AuroraBackground } from "@/components/AuroraBackground"
 import { AnimatedNumber } from "@/components/AnimatedNumber"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { apiOrigin, apiUrl } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -59,16 +62,15 @@ function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
 
 export function SunnyviewExperience() {
   const hasBackend = apiOrigin().length > 0
+  const isMobile = useIsMobile()
   const [phase, setPhase] = useState<Phase>("landing")
   const [entered, setEntered] = useState(false)
   const opened = phase !== "landing"
   const opening = phase === "opening"
-  const globeInteractive = phase === "app"
+  const [focusEarth, setFocusEarth] = useState(false)
+  const globeInteractive = phase === "app" && focusEarth
   const [panelsMounted, setPanelsMounted] = useState(false)
-
-  const globeCardRef = useRef<HTMLDivElement | null>(null)
-  const globeFlipFromRef = useRef<DOMRect | null>(null)
-  const globeFlipPlayedRef = useRef(false)
+  const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup")
 
   useEffect(() => {
     const t = window.setTimeout(() => setEntered(true), 30)
@@ -78,80 +80,11 @@ export function SunnyviewExperience() {
   function openApp() {
     if (phase !== "landing") return
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
-
-    globeFlipFromRef.current = globeCardRef.current?.getBoundingClientRect() ?? null
-    globeFlipPlayedRef.current = false
-
+    setFocusEarth(false)
     setPhase("opening")
-    window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 320)
-    window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 1220)
+    window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 220)
+    window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 900)
   }
-
-  useLayoutEffect(() => {
-    if (phase !== "opening") return
-    if (globeFlipPlayedRef.current) return
-
-    const from = globeFlipFromRef.current
-    const el = globeCardRef.current
-    if (!from || !el) return
-
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
-    if (reduceMotion) return
-
-    const to = el.getBoundingClientRect()
-    if (!to.width || !to.height) return
-
-    const dx = from.left - to.left
-    const dy = from.top - to.top
-    const sx = from.width / to.width
-    const sy = from.height / to.height
-    const uniformScale = Math.max(0.25, Math.min(3.5, Math.max(sx, sy)))
-    const travel = Math.hypot(dx, dy)
-
-    // If the delta is tiny, don't bother animating.
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(1 - uniformScale) < 0.01) {
-      globeFlipPlayedRef.current = true
-      return
-    }
-
-    globeFlipPlayedRef.current = true
-    const anim = el.animate(
-      [
-        {
-          transformOrigin: "50% 50%",
-          transform: `translate3d(${dx}px, ${dy}px, 0px) scale(${uniformScale})`,
-          filter: "brightness(1.08) saturate(1.08)",
-          opacity: 0.98,
-        },
-        {
-          offset: 0.64,
-          transform: `translate3d(${dx * 0.08}px, ${dy * 0.08}px, 0px) scale(${1 + (uniformScale - 1) * 0.06})`,
-          filter: "brightness(1.02) saturate(1.03)",
-          opacity: 1,
-        },
-        {
-          transformOrigin: "50% 50%",
-          transform: "translate3d(0px, 0px, 0px) scale(1)",
-          filter: "brightness(1) saturate(1)",
-          opacity: 1,
-        },
-      ],
-      {
-        duration: Math.min(1320, Math.max(920, 860 + travel * 0.3)),
-        easing: "cubic-bezier(0.16,0.88,0.2,1)",
-        fill: "both",
-      }
-    )
-    anim.onfinish = () => {
-      try {
-        el.style.transform = ""
-        el.style.filter = ""
-        el.style.opacity = ""
-      } catch {
-        // ignore
-      }
-    }
-  }, [phase])
 
   const [mapInput, setMapInput] = useState<MapInputResult>({
     kind: "address",
@@ -582,25 +515,25 @@ export function SunnyviewExperience() {
           <div className="text-xs text-muted-foreground">{estimate.source === "server" ? "Server estimate" : "Fallback"}</div>
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border glass-surface rounded-lg p-3">
             <div className="text-xs text-muted-foreground">Panels</div>
             <div className="mt-1 text-lg font-semibold text-foreground text-glow">
               <AnimatedNumber value={panelCount} />
             </div>
           </div>
-          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border glass-surface rounded-lg p-3">
             <div className="text-xs text-muted-foreground">DC kW</div>
             <div className="mt-1 text-lg font-semibold text-foreground text-glow">
               <AnimatedNumber value={dcKw} formatFn={(n) => n.toFixed(1)} />
             </div>
           </div>
-          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border glass-surface rounded-lg p-3">
             <div className="text-xs text-muted-foreground">Annual kWh</div>
             <div className="mt-1 text-lg font-semibold text-foreground text-glow">
               <AnimatedNumber value={estimate.annualKwh} />
             </div>
           </div>
-          <div className="stagger-item gradient-border rounded-lg border border-border bg-background/40 p-3">
+          <div className="stagger-item gradient-border glass-surface rounded-lg p-3">
             <div className="text-xs text-muted-foreground">Annual CO₂ (kg)</div>
             <div className="mt-1 text-lg font-semibold text-foreground text-glow">
               <AnimatedNumber value={estimate.annualCo2Kg} />
@@ -637,7 +570,7 @@ export function SunnyviewExperience() {
         </div>
 
         {explainText && (
-          <div className="mt-3 rounded-lg border border-border bg-background/40 p-3 text-sm text-foreground">
+          <div className="glass-surface mt-3 rounded-lg p-3 text-sm text-foreground">
             <ul className="list-disc space-y-1 pl-5">
               {explainText.bullets.map((b) => (
                 <li key={b}>{b}</li>
@@ -713,28 +646,79 @@ export function SunnyviewExperience() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,20,0.10)_0%,rgba(3,8,20,0.14)_42%,rgba(3,8,20,0.28)_100%)]" />
       <MouseSpotlight />
 
-      <div className="relative z-10 mx-auto h-full max-w-screen-2xl px-5 py-8 sm:px-6 sm:py-10 lg:px-8">
-        <div className="grid h-full grid-rows-[1fr]">
+      <GlobeStage
+        lat={lat}
+        lng={lng}
+        interactive={globeInteractive}
+        onPrimaryClick={opened ? undefined : openApp}
+        dim={opened && !focusEarth}
+        className="z-[2]"
+      />
+
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-0 z-[3] transition-opacity duration-700 motion-reduce:duration-0",
+          opened && !focusEarth ? "opacity-100" : "opacity-0"
+        )}
+      >
+        <div className="dashboard-scrim dashboard-scrim-left absolute inset-y-0 left-0 hidden w-[38vw] lg:block" />
+        <div className="dashboard-scrim dashboard-scrim-right absolute inset-y-0 right-0 hidden w-[38vw] lg:block" />
+        <div className="dashboard-scrim dashboard-scrim-bottom absolute inset-x-0 bottom-0 h-[24vh] lg:hidden" />
+      </div>
+
+      {!opened && (
+        <div className="pointer-events-none absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
+          Click the Earth
+        </div>
+      )}
+
+      <div className="absolute right-4 top-4 z-30 flex items-center gap-2 sm:right-5">
+        {opened && (
+          <button
+            type="button"
+            onClick={() => setFocusEarth((v) => !v)}
+            className={cn(
+              "inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium backdrop-blur-sm transition",
+              focusEarth
+                ? "border-primary/70 bg-primary/18 text-foreground"
+                : "border-border/70 bg-background/35 text-foreground hover:bg-background/55"
+            )}
+          >
+            {focusEarth ? "Exit Earth Focus" : "Focus Earth"}
+          </button>
+        )}
+
+        <Link
+          href="/settings"
+          className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/35 px-3 py-1.5 text-xs font-medium text-foreground backdrop-blur-sm transition hover:bg-background/55"
+        >
+          <Settings2 size={14} />
+          Settings
+        </Link>
+      </div>
+
+      <div className="relative z-20 mx-auto h-full max-w-screen-2xl px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
+        {!isMobile ? (
           <div
             className={cn(
-              "grid h-full grid-cols-1 gap-6",
+              "grid h-full min-h-0 grid-cols-1 gap-6",
               opened
-                ? "lg:grid-cols-[minmax(360px,440px)_minmax(520px,1fr)_minmax(360px,440px)]"
-                : "lg:grid-cols-[minmax(380px,520px)_minmax(560px,1fr)]"
+                ? "lg:grid-cols-[minmax(350px,430px)_minmax(0,1fr)_minmax(350px,430px)]"
+                : "lg:grid-cols-[minmax(380px,520px)_minmax(0,1fr)]"
             )}
           >
             <aside
               className={cn(
-                "relative min-h-0",
-                "transition-[opacity,transform,filter] duration-[1100ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                opened ? "opacity-100 blur-0" : "opacity-100 blur-0"
+                "relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                focusEarth && opened ? "pointer-events-none -translate-x-8 opacity-0 blur-md" : "translate-x-0 opacity-100 blur-0"
               )}
             >
               <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1">
                 <div
                   className={cn(
                     "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                    entered && !opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 -translate-x-8 blur-md pointer-events-none"
+                    entered && !opened ? "translate-x-0 opacity-100 blur-0" : "pointer-events-none -translate-x-8 opacity-0 blur-md"
                   )}
                 >
                   <HeroSection onStart={openApp} visible={entered && !opened} />
@@ -747,77 +731,29 @@ export function SunnyviewExperience() {
                   "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                   opened
                     ? opening
-                      ? "opacity-100 translate-x-0 blur-0 delay-[420ms]"
-                      : "opacity-100 translate-x-0 blur-0 delay-0"
-                    : "opacity-0 -translate-x-10 blur-md pointer-events-none delay-0"
+                      ? "translate-x-0 opacity-100 blur-0 delay-[220ms]"
+                      : "translate-x-0 opacity-100 blur-0 delay-0"
+                    : "pointer-events-none -translate-x-10 opacity-0 blur-md delay-0"
                 )}
               >
                 {panelsMounted ? leftPanel : null}
               </div>
             </aside>
 
-            <section className="min-h-0">
-              <div
-                ref={globeCardRef}
-                className={cn(
-                  "relative h-[min(560px,62vh)] w-full rounded-2xl border border-border/60 bg-card/20 lg:h-[min(820px,84vh)]",
-                  "gradient-border globe-glow-pulse",
-                  "transition-[opacity,filter,box-shadow] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                  entered ? "opacity-100" : "opacity-0",
-                  opened ? "blur-0" : "blur-0",
-                  opening ? "shadow-[0_38px_110px_-42px_rgba(0,0,0,0.82)]" : "shadow-[0_24px_72px_-40px_rgba(0,0,0,0.68)]"
-                )}
-                style={{ willChange: "transform" }}
-              >
-                <GlobeView
-                  lat={lat}
-                  lng={lng}
-                  showUi={false}
-                  interactive={globeInteractive}
-                  onPrimaryClick={opened ? undefined : openApp}
-                  frame={false}
-                  variant="hero"
-                  className="h-full w-full"
-                />
-
-                <div
-                  aria-hidden
-                  className={cn(
-                    "pointer-events-none absolute inset-0 z-10 rounded-2xl transition-opacity duration-[720ms] ease-[cubic-bezier(0.2,0.85,0.2,1)]",
-                    opening ? "opacity-100" : "opacity-0"
-                  )}
-                >
-                  <div className="absolute inset-0 bg-[radial-gradient(62%_54%_at_50%_46%,oklch(0.84_0.16_var(--accent-hue)_/_0.22),transparent_74%)]" />
-                  <div
-                    className={cn(
-                      "absolute -left-1/3 top-[-22%] h-[150%] w-[66%] rotate-[14deg] bg-[linear-gradient(90deg,transparent_0%,oklch(0.95_0.03_var(--accent-hue)_/_0.36)_52%,transparent_100%)] blur-2xl transition-transform duration-[1100ms] ease-[cubic-bezier(0.18,0.9,0.2,1)]",
-                      opening ? "translate-x-[245%]" : "translate-x-0"
-                    )}
-                  />
-                </div>
-
-                <div
-                  className={cn(
-                    "pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground transition-[opacity,transform,filter] duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                    opened ? "translate-y-2 opacity-0 blur-sm" : "translate-y-0 opacity-100 blur-0"
-                  )}
-                >
-                  Click the Earth
-                </div>
-              </div>
-            </section>
+            <div className="hidden min-h-0 lg:block" />
 
             {opened ? (
-              <aside className="min-h-0">
+              <aside
+                className={cn(
+                  "min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  focusEarth && opened ? "pointer-events-none translate-x-8 opacity-0 blur-md" : "translate-x-0 opacity-100 blur-0"
+                )}
+              >
                 <div className="h-full min-h-0 overflow-auto pl-1">
                   <div
                     className={cn(
                       "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                      opened
-                        ? opening
-                          ? "opacity-100 translate-x-0 blur-0 delay-[480ms]"
-                          : "opacity-100 translate-x-0 blur-0 delay-0"
-                        : "opacity-0 translate-x-10 blur-md pointer-events-none delay-0"
+                      opening ? "translate-x-0 opacity-100 blur-0 delay-[280ms]" : "translate-x-0 opacity-100 blur-0 delay-0"
                     )}
                   >
                     {panelsMounted ? rightPanel : null}
@@ -826,12 +762,65 @@ export function SunnyviewExperience() {
               </aside>
             ) : null}
           </div>
-        </div>
+        ) : (
+          <div className="relative h-full pt-14">
+            <div
+              className={cn(
+                "h-full overflow-auto pr-1 transition-opacity duration-500 motion-reduce:duration-0",
+                opened ? "pointer-events-none opacity-0" : "opacity-100"
+              )}
+            >
+              <HeroSection onStart={openApp} visible={entered && !opened} />
+            </div>
+
+            {opened ? (
+              <div
+                className={cn(
+                  "absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity,filter] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  focusEarth ? "pointer-events-none translate-y-[74%] opacity-40 blur-sm" : "translate-y-0 opacity-100 blur-0"
+                )}
+              >
+                <div className="glass-card mx-1 mb-2 overflow-hidden rounded-2xl">
+                  <div className="flex items-center gap-2 border-b border-border/60 p-2">
+                    <button
+                      type="button"
+                      onClick={() => setMobilePane("setup")}
+                      className={cn(
+                        "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                        mobilePane === "setup"
+                          ? "bg-primary/18 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Setup
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMobilePane("results")}
+                      className={cn(
+                        "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                        mobilePane === "results"
+                          ? "bg-primary/18 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Results
+                    </button>
+                  </div>
+
+                  <div className="max-h-[68vh] overflow-auto p-3">
+                    {panelsMounted ? (mobilePane === "setup" ? leftPanel : rightPanel) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {showShare && (
         <div className="absolute inset-0 z-50 grid place-items-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-border bg-background p-4 shadow-xl">
+          <div className="glass-card w-full max-w-md p-4">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-foreground">Share</div>
               <button
@@ -842,7 +831,7 @@ export function SunnyviewExperience() {
                 Close
               </button>
             </div>
-            <div className="mt-3 rounded-lg border border-border bg-card p-4">
+            <div className="glass-surface mt-3 rounded-lg p-4">
               {shareUrl ? (
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="grid place-items-center">
@@ -850,7 +839,7 @@ export function SunnyviewExperience() {
                   </div>
                   <div className="space-y-2">
                     <div className="text-xs text-muted-foreground">Public link</div>
-                    <div className="break-all rounded-md border border-border bg-background/40 p-2 text-xs text-foreground">
+                    <div className="glass-surface break-all rounded-md p-2 text-xs text-foreground">
                       {shareUrl}
                     </div>
                     <button

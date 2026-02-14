@@ -42,7 +42,7 @@ export function StaticMapPhoto({ address, lat, lng, zoom, className }: StaticMap
         <div className="text-[11px] text-muted-foreground">Esri World Imagery</div>
       </div>
 
-      <div className="mt-3 overflow-hidden rounded-lg border border-border bg-background/40">
+      <div className="glass-surface mt-3 overflow-hidden rounded-lg">
         {!src ? (
           <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-muted-foreground">
             Enter an address to load a satellite photo.
