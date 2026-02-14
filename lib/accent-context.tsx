@@ -64,6 +64,7 @@ export function AccentProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const storedAccent = readStoredAccent()
     if (storedAccent) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHue(storedAccent.hue)
       setSaturation(storedAccent.saturation)
     }

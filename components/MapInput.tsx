@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 const EARTH_R_M = 6378137
+const ADDRESS_STATIC_MAP_SCALE = 2
 
 export type MapInputResult = {
   kind: "address" | "image"
@@ -475,7 +476,8 @@ export function MapInput({
     if (tab !== "address") return null
     if (foundLat === null || !Number.isFinite(foundLat)) return null
     if (!Number.isFinite(zoom)) return null
-    return computeMetersPerPixel(foundLat, zoom)
+    const effectiveZoom = Math.round(zoom)
+    return computeMetersPerPixel(foundLat, effectiveZoom) / ADDRESS_STATIC_MAP_SCALE
   }, [tab, foundLat, zoom])
 
   useEffect(() => {
@@ -485,7 +487,7 @@ export function MapInput({
       address,
       lat: foundLat,
       lng: foundLng,
-      zoom,
+      zoom: Number.isFinite(zoom) ? Math.round(zoom) : null,
       mPerPx: foundLat !== null && foundLng !== null ? computedMPerPx : null,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -703,7 +705,7 @@ export function MapInput({
                 type="range"
                 min={14}
                 max={21}
-                step={0.1}
+                step={1}
                 value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
                 className="w-full"
