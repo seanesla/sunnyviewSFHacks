@@ -281,7 +281,7 @@ export function SunnyviewExperience() {
     if (mapInput.kind === "image" && mapInput.image) {
       return {
         kind: "image" as const,
-        dataUrl: mapInput.image.dataUrl,
+        src: mapInput.image.dataUrl,
         widthPx: mapInput.image.widthPx,
         heightPx: mapInput.image.heightPx,
       };
