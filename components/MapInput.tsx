@@ -31,6 +31,16 @@ function formatNum(n: number | null, digits = 6) {
   return n.toFixed(digits)
 }
 
+function looksLikeFullAddress(q: string) {
+  const s = q.trim()
+  const hasHouse = /^\d{1,8}\s+/.test(s)
+  const hasComma = s.includes(",")
+  const hasZip = /\b\d{5}(?:-\d{4})?\b/.test(s)
+  const tail = s.split(",").pop() ?? ""
+  const hasState = /\b[a-zA-Z]{2}\b/.test(tail)
+  return hasHouse && hasComma && (hasZip || hasState)
+}
+
 function CalibrationCanvas({
   dataUrl,
   widthPx,
@@ -253,16 +263,6 @@ export function MapInput({
     score: number | null
   }
 
-  function looksLikeFullAddress(q: string) {
-    const s = q.trim()
-    const hasHouse = /^\d{1,8}\s+/.test(s)
-    const hasComma = s.includes(",")
-    const hasZip = /\b\d{5}(?:-\d{4})?\b/.test(s)
-    const tail = s.split(",").pop() ?? ""
-    const hasState = /\b[a-zA-Z]{2}\b/.test(tail)
-    return hasHouse && hasComma && (hasZip || hasState)
-  }
-
   const [tab, setTab] = useState<"address" | "image">(value.kind)
   const [address, setAddress] = useState<string>(value.address ?? "")
   const [zoom, setZoom] = useState<number>(value.zoom ?? 19)
@@ -413,7 +413,7 @@ export function MapInput({
     } finally {
       setGeoBusy(false)
     }
-  }, [address, biasLat, biasLng, chooseOption, foundLat, foundLng, looksLikeFullAddress, zoom])
+  }, [address, biasLat, biasLng, chooseOption, foundLat, foundLng, zoom])
 
   useEffect(() => {
     if (tab !== "address") return

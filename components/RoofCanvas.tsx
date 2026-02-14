@@ -101,15 +101,17 @@ export function RoofCanvas({
   const [rectEnd, setRectEnd] = useState<Point | null>(null)
   const [drawingRect, setDrawingRect] = useState(false)
 
+  const imageWidth = background.kind === "image" ? background.widthPx : null
+  const imageHeight = background.kind === "image" ? background.heightPx : null
+  const imageSrc = background.kind === "image" ? background.src : null
+
   const internalSize = useMemo(() => {
-    if (background.kind === "image") return { w: background.widthPx, h: background.heightPx }
+    if (background.kind === "image" && imageWidth !== null && imageHeight !== null) {
+      return { w: imageWidth, h: imageHeight }
+    }
     if (background.kind === "osm") return { w: 1024, h: 640 }
     return { w: 1024, h: 640 }
-  }, [
-    background.kind,
-    background.kind === "image" ? background.widthPx : 0,
-    background.kind === "image" ? background.heightPx : 0,
-  ])
+  }, [background.kind, imageHeight, imageWidth])
 
   const toScreen = useCallback(
     (p: Point, rect: DOMRect) => {
@@ -451,7 +453,7 @@ export function RoofCanvas({
   }, [draw])
 
   useEffect(() => {
-    if (background.kind !== "image") {
+    if (background.kind !== "image" || !imageSrc) {
       imgRef.current = null
       return
     }
@@ -460,8 +462,8 @@ export function RoofCanvas({
       imgRef.current = img
       draw()
     }
-    img.src = background.src
-  }, [background.kind, background.kind === "image" ? background.src : null, draw])
+    img.src = imageSrc
+  }, [background.kind, draw, imageSrc])
 
   useEffect(() => {
     draw()

@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import Image from "next/image"
+import { useMemo, useState } from "react"
 
 type StaticMapPhotoProps = {
   address?: string | null
@@ -10,10 +11,44 @@ type StaticMapPhotoProps = {
   className?: string
 }
 
-export function StaticMapPhoto({ address, lat, lng, zoom, className }: StaticMapPhotoProps) {
+type StaticMapImageProps = {
+  src: string
+  alt: string
+}
+
+function StaticMapImage({ src, alt }: StaticMapImageProps) {
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
+  if (failed) {
+    return (
+      <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-destructive">
+        Failed to load photo. Check your Mapbox token and try again.
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative">
+      {!loaded && <div className="absolute inset-0 animate-pulse bg-muted/30" />}
+      <Image
+        src={src}
+        alt={alt}
+        width={1040}
+        height={720}
+        unoptimized
+        className="block h-auto w-full"
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          setFailed(true)
+          setLoaded(false)
+        }}
+      />
+    </div>
+  )
+}
+
+export function StaticMapPhoto({ address, lat, lng, zoom, className }: StaticMapPhotoProps) {
   const src = useMemo(() => {
     if (lat === null || lng === null) return null
     const z = zoom ?? 19
@@ -30,11 +65,6 @@ export function StaticMapPhoto({ address, lat, lng, zoom, className }: StaticMap
 
   const title = address?.trim() ? address.trim() : "Satellite preview"
 
-  useEffect(() => {
-    setFailed(false)
-    setLoaded(false)
-  }, [src])
-
   return (
     <div className={className}>
       <div className="flex items-center justify-between gap-2">
@@ -47,28 +77,12 @@ export function StaticMapPhoto({ address, lat, lng, zoom, className }: StaticMap
           <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-muted-foreground">
             Enter an address to load a satellite photo.
           </div>
-        ) : failed ? (
-          <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-destructive">
-            Failed to load photo. Check your Mapbox token and try again.
-          </div>
         ) : (
-          <div className="relative">
-            {!loaded && <div className="absolute inset-0 animate-pulse bg-muted/30" />}
-            <img
-              src={src}
-              alt={title}
-              className="block h-auto w-full"
-              onLoad={() => setLoaded(true)}
-              onError={() => {
-                setFailed(true)
-                setLoaded(false)
-              }}
-            />
-          </div>
+          <StaticMapImage key={src} src={src} alt={title} />
         )}
       </div>
 
-      {src && !failed && (
+      {src && (
         <div className="mt-2 truncate text-[11px] text-muted-foreground" title={title}>
           {title}
         </div>
