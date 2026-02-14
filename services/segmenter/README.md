@@ -47,6 +47,30 @@ Health check:
 curl -sS http://localhost:8000/healthz | jq
 ```
 
+## Enable RoofSat-trained ONNX model (fully automatic)
+
+This option runs a lightweight segmentation model trained on RoofSat `building_masks`.
+
+1) Install ONNX runtime deps:
+
+```bash
+pip install -r requirements-onnx.txt
+```
+
+2) Train + export an ONNX model (see `train_roofsat/README.md`), then point the service at it:
+
+```bash
+export ROOFSEG_ONNX_PATH=/absolute/path/to/roofsat_unet.onnx
+export ROOFSEG_INPUT_SIZE=512
+export ROOFSEG_THRESHOLD=0.5
+```
+
+3) Restart `uvicorn`.
+
+Notes:
+- ONNX is tried before SAM.
+- The Next.js API route forwards an address-matched `osmFootprint` polygon; the segmenter uses it to keep only the roof for the requested address.
+
 ## API
 
 `POST /segment`

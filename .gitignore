@@ -18,6 +18,7 @@ node_modules/
 .next/
 *.tsbuildinfo
 dev.log
+.devserver.log
 .next-dev.log
 .next-dev.pid
 .env*.local

@@ -10,8 +10,11 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from onnx_roofseg import OnnxRoofSeg
+from postprocess import choose_component_by_footprint
 
-app = FastAPI(title="sunnyview-segmenter", version="0.1.0")
+
+app = FastAPI(title="sunnyview-segmenter", version="0.2.0")
 
 
 class Click(BaseModel):
@@ -331,13 +334,21 @@ class _SamState:
 
 
 SAM = _SamState()
+ONNX = OnnxRoofSeg()
 
 
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
     sam_ready = SAM.ensure_loaded()
+    onnx_ready = ONNX.ensure_loaded()
     return {
         "ok": True,
+        "onnx": {
+            "ready": onnx_ready,
+            "error": ONNX.error,
+            "path": ONNX.path,
+            "inputSize": ONNX.size if onnx_ready else None,
+        },
         "sam": {
             "ready": sam_ready,
             "error": SAM.error,
@@ -369,6 +380,75 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
     footprint_ring = _extract_geojson_ring(meta.get("osmFootprint"))
     footprint_mask = _ring_norm_to_mask(footprint_ring, w, h) if footprint_ring else None
 
+    box: Optional[np.ndarray] = None
+    roi_bounds: Optional[Tuple[int, int, int, int]] = None
+    if req.roi:
+        x0 = int(np.clip(req.roi.x, 0, w - 1))
+        y0 = int(np.clip(req.roi.y, 0, h - 1))
+        x1 = int(np.clip(req.roi.x + req.roi.w, 1, w))
+        y1 = int(np.clip(req.roi.y + req.roi.h, 1, h))
+        if x1 > x0 and y1 > y0:
+            box = np.array([x0, y0, x1, y1], dtype=np.float32)
+            roi_bounds = (x0, y0, x1, y1)
+
+    mode = (req.mode or "roof").strip().lower()
+
+    onnx_error: Optional[str] = None
+    if mode in ("roof", "building") and ONNX.ensure_loaded():
+        try:
+            if roi_bounds is not None:
+                prob, _ = ONNX.predict_prob_roi(img_bgr, roi_bounds)
+            else:
+                prob = ONNX.predict_prob(img_bgr)
+
+            thr_raw = os.getenv("ROOFSEG_THRESHOLD", "0.5").strip()
+            try:
+                thr = float(thr_raw)
+            except Exception:
+                thr = 0.5
+            thr = float(np.clip(thr, 0.05, 0.95))
+
+            chosen = (prob >= thr).astype(np.uint8)
+
+            best_iou = -1.0
+            if footprint_mask is not None:
+                k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+                footprint_pad = cv2.dilate(footprint_mask.astype(np.uint8), k, iterations=1)
+                chosen = choose_component_by_footprint(chosen, footprint_pad)
+                best_iou = _mask_iou(chosen, footprint_mask)
+                chosen = (np.logical_and(chosen > 0, footprint_pad > 0)).astype(np.uint8)
+
+            if roi_bounds is not None:
+                x0, y0, x1, y1 = roi_bounds
+                roi_mask = np.zeros((h, w), dtype=np.uint8)
+                roi_mask[y0:y1, x0:x1] = 1
+                chosen = (np.logical_and(chosen > 0, roi_mask > 0)).astype(np.uint8)
+
+            chosen = _keep_component(chosen, cx, cy)
+
+            if int(chosen.sum()) >= 30:
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+                chosen = cv2.morphologyEx(chosen, cv2.MORPH_CLOSE, kernel, iterations=2)
+                chosen = cv2.morphologyEx(chosen, cv2.MORPH_OPEN, kernel, iterations=1)
+
+                poly = _mask_to_polygon_norm(chosen, w, h)
+                if poly is not None:
+                    mean_p = float(prob[chosen > 0].mean()) if int(chosen.sum()) > 0 else 0.0
+                    conf = float(np.clip(0.15 + 0.75 * mean_p + 0.10 * float(max(best_iou, 0.0)), 0.0, 1.0))
+                    return {
+                        "roofPolygon": poly,
+                        "confidence": conf,
+                        "source": "roofsat_onnx",
+                        "debug": {
+                            "onnx": True,
+                            "threshold": thr,
+                            "meanProb": mean_p,
+                            "iou": max(best_iou, 0.0),
+                        },
+                    }
+        except Exception as e:
+            onnx_error = str(e)
+
     # If SAM isn't ready, still return the server-selected address footprint.
     if not SAM.ensure_loaded():
         if meta.get("osmFootprint") is not None:
@@ -376,7 +456,7 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
                 "roofPolygon": meta.get("osmFootprint"),
                 "confidence": 0.55,
                 "source": "osm_footprint_passthrough",
-                "debug": {"sam": False, "samError": SAM.error},
+                "debug": {"sam": False, "samError": SAM.error, "onnx": False, "onnxError": onnx_error or ONNX.error},
             }
 
         # Last resort: centered rectangle.
@@ -389,7 +469,7 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
             "roofPolygon": rect,
             "confidence": 0.2,
             "source": "fallback_rect",
-            "debug": {"sam": False, "samError": SAM.error},
+            "debug": {"sam": False, "samError": SAM.error, "onnx": False, "onnxError": onnx_error or ONNX.error},
         }
 
     # SAM path
@@ -405,17 +485,6 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
             labs.append(1 if c.type == "pos" else 0)
         point_coords = np.array(pts, dtype=np.float32)
         point_labels = np.array(labs, dtype=np.int32)
-
-    box: Optional[np.ndarray] = None
-    roi_bounds: Optional[Tuple[int, int, int, int]] = None
-    if req.roi:
-        x0 = int(np.clip(req.roi.x, 0, w - 1))
-        y0 = int(np.clip(req.roi.y, 0, h - 1))
-        x1 = int(np.clip(req.roi.x + req.roi.w, 1, w))
-        y1 = int(np.clip(req.roi.y + req.roi.h, 1, h))
-        if x1 > x0 and y1 > y0:
-            box = np.array([x0, y0, x1, y1], dtype=np.float32)
-            roi_bounds = (x0, y0, x1, y1)
 
     try:
         masks, scores = SAM.predict(img_rgb, point_coords=point_coords, point_labels=point_labels, box=box)
@@ -516,13 +585,15 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
     candidates_out: List[Dict[str, Any]] = []
     source = "sam"
 
-    # Try to split a gable-style roof into a single plane using strong roof lines.
+    # Orientation hint from dominant roof edges.
     lines = _edge_lines(img_bgr, chosen)
     dom = _dominant_angle(lines)
     if dom is not None:
         suggested_orientation = float(dom)
 
-        # Pick a long, central line near the dominant angle.
+    # Optional: split a gable-style roof into a single plane.
+    # Default mode="roof" returns the full roof mask.
+    if mode in ("plane", "roof_plane") and dom is not None:
         mx, my = _mask_centroid(chosen)
         best_line = None
         best_score = -1e18
