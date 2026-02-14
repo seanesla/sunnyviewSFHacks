@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { STATIC_MAP_SCALE } from "@/lib/static-map"
+
 const EARTH_R_M = 6378137
-const ADDRESS_STATIC_MAP_SCALE = 2
 
 export type MapInputResult = {
   kind: "address" | "image"
@@ -399,7 +400,7 @@ export function MapInput({
         .filter(Boolean)
 
       if (!options.length) {
-        setGeoError("No results. Try a more specific address.")
+        setGeoError(warning ?? "No results. Try a more specific address.")
         return
       }
 
@@ -477,7 +478,7 @@ export function MapInput({
     if (foundLat === null || !Number.isFinite(foundLat)) return null
     if (!Number.isFinite(zoom)) return null
     const effectiveZoom = Math.round(zoom)
-    return computeMetersPerPixel(foundLat, effectiveZoom) / ADDRESS_STATIC_MAP_SCALE
+    return computeMetersPerPixel(foundLat, effectiveZoom) / STATIC_MAP_SCALE
   }, [tab, foundLat, zoom])
 
   useEffect(() => {

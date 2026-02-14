@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Settings2 } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import { HeroSection } from "@/components/hero-section";
@@ -8,7 +8,7 @@ import { GlobeStage } from "@/components/GlobeStage";
 import { MapInput, type MapInputResult } from "@/components/MapInput";
 import { SunnyviewLogoLoader } from "@/components/SunnyviewLogoLoader";
 import { SettingsPage } from "@/components/settings-page";
-import { StaticMapPhoto } from "@/components/StaticMapPhoto";
+import { SolarForecastCard } from "@/components/SolarForecastCard";
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking";
 import { packPanelsDeterministic } from "@/components/PanelPacking";
 import { RoofCanvas } from "@/components/RoofCanvas";
@@ -16,6 +16,9 @@ import { BackgroundScene } from "@/components/BackgroundScene";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { apiOrigin, apiUrl } from "@/lib/api";
+import { buildStaticMapSpec } from "@/lib/static-map";
+import { PANEL_OPTIONS } from "@/lib/panels";
+import { polygonAreaPx2, splitFootprintIntoPlanes } from "@/lib/roof-plane";
 import { cn } from "@/lib/utils";
 
 type Phase = "landing" | "opening" | "app";
@@ -28,39 +31,164 @@ type Estimate = {
   assumptions?: unknown;
 };
 
+
 function coerceNumber(v: unknown): number | null {
   const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
-  if (!Array.isArray(data)) return null;
-  const pts: Point[] = [];
-  for (const item of data) {
-    if (Array.isArray(item) && item.length >= 2) {
-      const x = coerceNumber(item[0]);
-      const y = coerceNumber(item[1]);
-      if (x === null || y === null) return null;
-      pts.push({ x, y });
-      continue;
-    }
-    if (item && typeof item === "object") {
-      const x = coerceNumber((item as any).x);
-      const y = coerceNumber((item as any).y);
-      if (x === null || y === null) return null;
-      pts.push({ x, y });
-      continue;
-    }
-    return null;
-  }
-  if (pts.length < 3) return null;
-
-  const normalized = pts.every(
-    (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1,
-  );
-  if (normalized) return pts.map((p) => ({ x: p.x * w, y: p.y * h }));
-  return pts;
+function clampAngle90(deg: number) {
+  let d = deg;
+  while (d > 90) d -= 180;
+  while (d < -90) d += 180;
+  return d;
 }
+
+function polygonMajorAxisDeg(poly: Point[]) {
+  if (poly.length < 3) return 0;
+  const c = poly.reduce(
+    (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
+    { x: 0, y: 0 }
+  );
+  const cx = c.x / poly.length;
+  const cy = c.y / poly.length;
+  let xx = 0;
+  let yy = 0;
+  let xy = 0;
+  for (const p of poly) {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    xx += dx * dx;
+    yy += dy * dy;
+    xy += dx * dy;
+  }
+  const n = Math.max(1, poly.length);
+  xx /= n;
+  yy /= n;
+  xy /= n;
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  return clampAngle90((angle * 180) / Math.PI);
+}
+
+function bestPackingOrientationDeg(opts: {
+  polygon: Point[];
+  mPerPx: number;
+  panelSpec: PanelSpec;
+  seedDeg: number;
+}) {
+  const seed = clampAngle90(opts.seedDeg);
+  const panel = { widthM: opts.panelSpec.widthM, heightM: opts.panelSpec.heightM, gapM: opts.panelSpec.gapM };
+
+  const score = (deg: number) =>
+    packPanelsDeterministic({
+      usablePolygon: opts.polygon,
+      mPerPx: opts.mPerPx,
+      panel,
+      orientationDeg: deg,
+    }).length;
+
+  let bestDeg = seed;
+  let bestCount = score(bestDeg);
+
+  // Coarse sweep around seed.
+  for (let d = -45; d <= 45; d += 5) {
+    const cand = clampAngle90(seed + d);
+    const cnt = score(cand);
+    if (cnt > bestCount) {
+      bestCount = cnt;
+      bestDeg = cand;
+    }
+  }
+
+  // Fine sweep.
+  for (let d = -10; d <= 10; d += 1) {
+    const cand = clampAngle90(bestDeg + d);
+    const cnt = score(cand);
+    if (cnt > bestCount) {
+      bestCount = cnt;
+      bestDeg = cand;
+    }
+  }
+
+  return bestDeg;
+}
+
+function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
+  const scaleIfNormalized = (pts: Point[]) => {
+    const normalized = pts.every(
+      (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1,
+    );
+    return normalized ? pts.map((p) => ({ x: p.x * w, y: p.y * h })) : pts;
+  };
+
+  const parsePointsArray = (arr: unknown[]): Point[] | null => {
+    const pts: Point[] = [];
+    for (const item of arr) {
+      if (Array.isArray(item) && item.length >= 2) {
+        const x = coerceNumber(item[0]);
+        const y = coerceNumber(item[1]);
+        if (x === null || y === null) return null;
+        pts.push({ x, y });
+        continue;
+      }
+      if (item && typeof item === "object") {
+        const x = coerceNumber((item as any).x);
+        const y = coerceNumber((item as any).y);
+        if (x === null || y === null) return null;
+        pts.push({ x, y });
+        continue;
+      }
+      return null;
+    }
+
+    if (pts.length >= 2) {
+      const a = pts[0];
+      const b = pts[pts.length - 1];
+      if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) pts.pop();
+    }
+
+    return pts.length >= 3 ? pts : null;
+  };
+
+  // GeoJSON-like shapes: Polygon / MultiPolygon / Feature.
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const obj = data as any;
+    if (obj?.type === "Feature" && obj?.geometry) {
+      return normalizePolygon(obj.geometry, w, h);
+    }
+
+    const typ = typeof obj?.type === "string" ? String(obj.type) : null;
+    const coords = obj?.coordinates;
+    if (coords && Array.isArray(coords)) {
+      let ring: unknown[] | null = null;
+      if (typ === "Polygon" && Array.isArray(coords[0])) {
+        ring = coords[0] as unknown[];
+      } else if (typ === "MultiPolygon" && Array.isArray(coords[0]) && Array.isArray((coords[0] as any)[0])) {
+        ring = (coords[0] as any)[0] as unknown[];
+      } else if (Array.isArray(coords[0]) && (coords[0] as any).length >= 2) {
+        // Some services omit `type` and return { coordinates: [[x,y],...] }
+        ring = coords as unknown[];
+      }
+
+      if (ring) {
+        const pts = parsePointsArray(ring);
+        return pts ? scaleIfNormalized(pts) : null;
+      }
+    }
+
+    // Common wrappers.
+    const inner = obj?.roofPolygon ?? obj?.polygon ?? obj?.usablePolygon;
+    if (inner && inner !== data) {
+      const pts = normalizePolygon(inner, w, h);
+      if (pts) return pts;
+    }
+  }
+
+  if (!Array.isArray(data)) return null;
+  const pts = parsePointsArray(data);
+  return pts ? scaleIfNormalized(pts) : null;
+}
+
 
 export function SunnyviewExperience() {
   const hasBackend = apiOrigin().length > 0;
@@ -157,12 +285,37 @@ export function SunnyviewExperience() {
 
   const mPerPx = mapInput.mPerPx;
 
+  const addressStatic = useMemo(() => {
+    if (mapInput.kind !== "address") return null;
+    if (mapInput.lat === null || mapInput.lng === null) return null;
+    const spec = buildStaticMapSpec({
+      lat: mapInput.lat,
+      lng: mapInput.lng,
+      zoom: mapInput.zoom ?? 19,
+    });
+    return {
+      ...spec,
+      address: mapInput.address?.trim() ? mapInput.address.trim() : null,
+    };
+  }, [mapInput.address, mapInput.kind, mapInput.lat, mapInput.lng, mapInput.zoom]);
+
   const [panelSpec, setPanelSpec] = useState<PanelSpec>({
     widthM: 1.1,
     heightM: 1.7,
     wattW: 400,
     gapM: 0.02,
   });
+  const [panelSpecMode, setPanelSpecMode] = useState<"auto" | "manual">("auto");
+  const [panelChoiceId, setPanelChoiceId] = useState<string>(PANEL_OPTIONS[0]?.id ?? "custom");
+  const [panelBrandRec, setPanelBrandRec] = useState<
+    | { selectedId: string; brand: string; model: string; why: string[]; caveats: string[] }
+    | null
+  >(null);
+  const [panelBrandBusy, setPanelBrandBusy] = useState(false);
+  const [panelBrandError, setPanelBrandError] = useState<string | null>(null);
+  const lastPanelAutoKeyRef = useRef<string | null>(null);
+  const [panelBrandReqSeq, setPanelBrandReqSeq] = useState(0);
+  const panelBrandAbortRef = useRef<AbortController | null>(null);
   const [orientationDeg, setOrientationDeg] = useState<number>(0);
   const [tiltDeg, setTiltDeg] = useState<number>(20);
   const [azimuthDeg, setAzimuthDeg] = useState<number>(180);
@@ -171,6 +324,16 @@ export function SunnyviewExperience() {
   const [vertices, setVertices] = useState<Point[]>([]);
   const [closed, setClosed] = useState<boolean>(false);
   const [panels, setPanels] = useState<PlacedPanel[]>([]);
+
+  const [autoOutlineBusy, setAutoOutlineBusy] = useState(false);
+  const [autoOutlineError, setAutoOutlineError] = useState<string | null>(null);
+  const [autoOutlineHint, setAutoOutlineHint] = useState<string | null>(null);
+  const [candidatePolygons, setCandidatePolygons] = useState<
+    Array<{ id: string; polygon: Point[]; score?: number }> | null
+  >(null);
+
+  const segmentAbortRef = useRef<AbortController | null>(null);
+  const lastAutoSegmentKeyRef = useRef<string | null>(null);
 
   const [estimate, setEstimate] = useState<Estimate>({
     annualKwh: 0,
@@ -184,6 +347,212 @@ export function SunnyviewExperience() {
     () => (panelCount * panelSpec.wattW) / 1000,
     [panelCount, panelSpec.wattW],
   );
+
+  const panelChoiceLabel = useMemo(() => {
+    if (panelChoiceId === "custom") return "Custom"
+    return PANEL_OPTIONS.find((c) => c.id === panelChoiceId)?.label ?? "Standard"
+  }, [panelChoiceId]);
+
+  const roofAreaM2 = useMemo(() => {
+    if (!closed || vertices.length < 3 || !mPerPx) return null;
+    return polygonAreaPx2(vertices) * mPerPx * mPerPx;
+  }, [closed, mPerPx, vertices]);
+
+  useEffect(() => {
+    if (!panelsMounted) return;
+    if (panelSpecMode !== "auto") return;
+    if (!closed || vertices.length < 3 || !mPerPx) return;
+
+    const key = `roof:${Math.round((roofAreaM2 ?? 0) * 10) / 10}:${vertices.length}:${Math.round(mPerPx * 1e6)}`;
+    if (lastPanelAutoKeyRef.current === key) return;
+    lastPanelAutoKeyRef.current = key;
+
+    let best = { id: PANEL_OPTIONS[0]?.id ?? "custom", spec: PANEL_OPTIONS[0]?.spec ?? panelSpec, orient: 0, dc: -Infinity };
+    for (const c of PANEL_OPTIONS) {
+      const orient = bestPackingOrientationDeg({
+        polygon: vertices,
+        mPerPx,
+        panelSpec: c.spec,
+        seedDeg: polygonMajorAxisDeg(vertices),
+      });
+      const count = packPanelsDeterministic({
+        usablePolygon: vertices,
+        mPerPx,
+        panel: { widthM: c.spec.widthM, heightM: c.spec.heightM, gapM: c.spec.gapM },
+        orientationDeg: orient,
+      }).length;
+      const dc = (count * c.spec.wattW) / 1000;
+      if (dc > best.dc + 1e-6) {
+        best = { id: c.id, spec: c.spec, orient, dc };
+      }
+    }
+
+    setPanelChoiceId(best.id);
+    setPanelSpec(best.spec);
+    setOrientationDeg(best.orient);
+    setPanelBrandRec(null);
+    setPanelBrandError(null);
+    setPanelBrandReqSeq((s) => s + 1);
+  }, [
+    closed,
+    mPerPx,
+    panelSpec,
+    panelSpecMode,
+    panelsMounted,
+    roofAreaM2,
+    vertices,
+  ]);
+
+  useEffect(() => {
+    if (!panelsMounted) return;
+    if (!closed || vertices.length < 3) return;
+    if (!roofAreaM2 || roofAreaM2 <= 0) return;
+    if (lat === null || lng === null) return;
+
+    panelBrandAbortRef.current?.abort();
+    const ac = new AbortController();
+    panelBrandAbortRef.current = ac;
+
+    setPanelBrandBusy(true);
+    setPanelBrandError(null);
+
+    const fits = PANEL_OPTIONS.map((o) => {
+      const orient = mPerPx
+        ? bestPackingOrientationDeg({
+            polygon: vertices,
+            mPerPx,
+            panelSpec: o.spec,
+            seedDeg: polygonMajorAxisDeg(vertices),
+          })
+        : orientationDeg;
+      const count = mPerPx
+        ? packPanelsDeterministic({
+            usablePolygon: vertices,
+            mPerPx,
+            panel: { widthM: o.spec.widthM, heightM: o.spec.heightM, gapM: o.spec.gapM },
+            orientationDeg: orient,
+          }).length
+        : 0;
+      const dc = (count * o.spec.wattW) / 1000;
+      return {
+        id: o.id,
+        label: o.label,
+        brand: o.brand,
+        model: o.model,
+        spec: { widthM: o.spec.widthM, heightM: o.spec.heightM, wattW: o.spec.wattW, gapM: o.spec.gapM },
+        fit: { panelCount: count, dcKw: dc, orientationDeg: orient },
+      };
+    });
+
+    if (panelSpecMode === "manual") {
+      const orient = mPerPx
+        ? bestPackingOrientationDeg({
+            polygon: vertices,
+            mPerPx,
+            panelSpec,
+            seedDeg: polygonMajorAxisDeg(vertices),
+          })
+        : orientationDeg;
+      const count = mPerPx
+        ? packPanelsDeterministic({
+            usablePolygon: vertices,
+            mPerPx,
+            panel: { widthM: panelSpec.widthM, heightM: panelSpec.heightM, gapM: panelSpec.gapM },
+            orientationDeg: orient,
+          }).length
+        : 0;
+      const dc = (count * panelSpec.wattW) / 1000;
+      fits.unshift({
+        id: "custom",
+        label: "Custom size",
+        brand: "(custom)",
+        model: "User-defined",
+        spec: {
+          widthM: panelSpec.widthM,
+          heightM: panelSpec.heightM,
+          wattW: panelSpec.wattW,
+          gapM: panelSpec.gapM,
+        },
+        fit: { panelCount: count, dcKw: dc, orientationDeg: orient },
+      });
+    }
+
+    (async () => {
+      try {
+        const res = await fetch(apiUrl("/api/panel-recommend"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal: ac.signal,
+          body: JSON.stringify({
+            lat,
+            lng,
+            roofAreaM2,
+            options: fits,
+            currentId: panelChoiceId,
+            notes:
+              "Pick the best option for this roof based on energy yield per area, reliability, and the computed fit counts.",
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as any;
+        if (!res.ok) {
+          throw new Error(
+            typeof data?.error === "string" ? data.error : `Panel recommendation failed (${res.status})`,
+          );
+        }
+
+        const selectedId = typeof data?.selectedId === "string" ? data.selectedId : null;
+        const brand = typeof data?.brand === "string" ? data.brand : null;
+        const model = typeof data?.model === "string" ? data.model : null;
+        const why = Array.isArray(data?.why) ? data.why.map((v: any) => String(v)) : [];
+        const caveats = Array.isArray(data?.caveats) ? data.caveats.map((v: any) => String(v)) : [];
+        if (!selectedId || !brand || !model) throw new Error("Invalid Gemini response");
+
+        setPanelBrandRec({
+          selectedId,
+          brand,
+          model,
+          why: why.slice(0, 4),
+          caveats: caveats.slice(0, 3),
+        });
+
+        if (panelSpecMode === "auto") {
+          const picked = fits.find((f) => f.id === selectedId);
+          if (picked) {
+            setPanelChoiceId(picked.id);
+            setPanelSpec({
+              widthM: picked.spec.widthM,
+              heightM: picked.spec.heightM,
+              wattW: picked.spec.wattW,
+              gapM: picked.spec.gapM,
+            });
+            if (typeof picked.fit?.orientationDeg === "number") {
+              setOrientationDeg(clampAngle90(picked.fit.orientationDeg));
+            }
+          }
+        }
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        setPanelBrandError(e instanceof Error ? e.message : "Panel recommendation failed.");
+      } finally {
+        if (!ac.signal.aborted) setPanelBrandBusy(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [
+    closed,
+    lat,
+    lng,
+    mPerPx,
+    orientationDeg,
+    panelChoiceId,
+    panelBrandReqSeq,
+    panelsMounted,
+    roofAreaM2,
+    panelSpec,
+    panelSpecMode,
+    vertices,
+  ]);
 
   const fallbackEstimate = useMemo((): Estimate => {
     const annualKwh = Math.max(0, dcKw) * 1400;
@@ -298,11 +667,16 @@ export function SunnyviewExperience() {
         heightPx: mapInput.image.heightPx,
       };
     }
-    if (mapInput.kind === "address" && lat !== null && lng !== null) {
-      return { kind: "osm" as const, lat, lng, zoom };
+    if (addressStatic) {
+      return {
+        kind: "image" as const,
+        src: addressStatic.src,
+        widthPx: addressStatic.widthPx,
+        heightPx: addressStatic.heightPx,
+      };
     }
     return { kind: "none" as const };
-  }, [lat, lng, mapInput.kind, mapInput.image, zoom]);
+  }, [addressStatic, mapInput.kind, mapInput.image]);
 
   const [projectId, setProjectId] = useState<string | null>(null);
   const [shareSlug, setShareSlug] = useState<string | null>(null);
@@ -510,35 +884,238 @@ export function SunnyviewExperience() {
     }
   }
 
-  async function runAutoOutline() {
-    if (mapInput.kind !== "image" || !mapInput.image?.dataUrl) return;
-    try {
-      const res = await fetch(apiUrl("/api/segment"), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          imageDataUrl: mapInput.image.dataUrl,
-          mode: "roof",
-        }),
-      });
-      if (!res.ok) return;
-      const data = (await res.json().catch(() => null)) as any;
-      const polyRaw =
-        data?.roofPolygon ??
-        data?.polygon ??
-        data?.usablePolygon ??
-        data?.result?.roofPolygon ??
-        data?.result?.polygon;
-      const w = mapInput.image.widthPx;
-      const h = mapInput.image.heightPx;
-      const poly = normalizePolygon(polyRaw, w, h);
-      if (!poly) return;
-      setVertices(poly);
+  const runAutoOutline = useCallback(
+    async (opts?: { reason?: "auto" | "manual" }) => {
+      const reason = opts?.reason ?? "manual";
+
+      const request = (() => {
+        if (mapInput.kind === "image" && mapInput.image?.dataUrl) {
+          const w = mapInput.image.widthPx;
+          const h = mapInput.image.heightPx;
+          return {
+            w,
+            h,
+            body: {
+              imageDataUrl: mapInput.image.dataUrl,
+              mode: "roof",
+              clicks: [{ x: w / 2, y: h / 2, type: "pos" }],
+              meta: {
+                lat: mapInput.lat,
+                lng: mapInput.lng,
+                zoom: mapInput.zoom,
+                widthPx: w,
+                heightPx: h,
+                address: mapInput.address ?? null,
+              },
+            },
+          };
+        }
+
+        if (mapInput.kind === "address" && addressStatic) {
+          const w = addressStatic.widthPx;
+          const h = addressStatic.heightPx;
+          return {
+            w,
+            h,
+            body: {
+              imageUrl: addressStatic.src,
+              mode: "roof",
+              clicks: [{ x: w / 2, y: h / 2, type: "pos" }],
+              meta: {
+                ...addressStatic.meta,
+                address: addressStatic.address,
+              },
+            },
+          };
+        }
+
+        return null;
+      })();
+
+      if (!request) return;
+
+      segmentAbortRef.current?.abort();
+      const ac = new AbortController();
+      segmentAbortRef.current = ac;
+
+      setAutoOutlineBusy(true);
+      setAutoOutlineError(null);
+      setAutoOutlineHint(null);
+      setCandidatePolygons(null);
+
+      try {
+        const res = await fetch(apiUrl("/api/segment"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal: ac.signal,
+          body: JSON.stringify(request.body),
+        });
+        const data = (await res.json().catch(() => null)) as any;
+        if (!res.ok) {
+          const msg =
+            typeof data?.error === "string"
+              ? data.error
+              : `Segmentation failed (HTTP ${res.status})`;
+          throw new Error(msg);
+        }
+
+        const note = typeof data?.note === "string" ? String(data.note) : null;
+
+        const candidatesRaw = Array.isArray(data?.candidates) ? (data.candidates as any[]) : [];
+        const candidates = candidatesRaw
+          .map((c, idx) => {
+            const id = typeof c?.id === "string" ? c.id : String(idx);
+            const score = Number(c?.score);
+            const poly = normalizePolygon(c?.polygon ?? c?.roofPolygon ?? c, request.w, request.h);
+            if (!poly) return null;
+            return {
+              id,
+              polygon: poly,
+              score: Number.isFinite(score) ? score : undefined,
+            };
+          })
+          .filter(Boolean) as Array<{ id: string; polygon: Point[]; score?: number }>;
+
+        if (candidates.length) setCandidatePolygons(candidates);
+
+        const polyRaw =
+          data?.roofPolygon ??
+          data?.polygon ??
+          data?.usablePolygon ??
+          data?.result?.roofPolygon ??
+          data?.result?.polygon;
+
+        const primary =
+          normalizePolygon(polyRaw, request.w, request.h) ??
+          (candidates.length ? candidates[0].polygon : null);
+
+        if (!primary) {
+          throw new Error("No roof polygon returned");
+        }
+
+        const source =
+          typeof data?.source === "string"
+            ? String(data.source)
+            : typeof data?.result?.source === "string"
+              ? String(data.result.source)
+              : null;
+        const looksLikeFootprint =
+          typeof source === "string" &&
+          (source === "osm_building" ||
+            source === "osm_candidates" ||
+            source.startsWith("osm_") ||
+            source.includes("footprint"));
+
+        let selected = primary;
+        let hint: string | null = null;
+
+        // When the outline is an OSM building footprint (not a true roof plane),
+        // panel counts can be wildly inflated because we treat the whole footprint
+        // as one flat, usable surface. For small residential roofs, split the
+        // footprint into two likely planes and pick one.
+        if (looksLikeFootprint && candidates.length === 0 && mPerPx) {
+          const areaM2 = polygonAreaPx2(primary) * mPerPx * mPerPx;
+          const focusPx = { x: request.w / 2, y: request.h / 2 };
+          if (areaM2 > 8 && areaM2 < 240) {
+            const split = splitFootprintIntoPlanes({
+              footprint: primary,
+              focusPx,
+            });
+            if (split) {
+              selected = split.chosen;
+              setCandidatePolygons(split.planes);
+              hint =
+                source?.includes("passthrough") || source?.includes("sam_error")
+                  ? "CV model not active; using an OSM footprint + single-plane estimate. Configure SAM_CHECKPOINT for best accuracy."
+                  : "Using a single roof plane estimate (from OSM footprint). Click the other outline if needed.";
+            }
+          }
+        }
+
+        // Auto-orient panels from CV (preferred) or polygon geometry.
+        const suggestedOrient =
+          coerceNumber(data?.suggestedOrientationDeg) ??
+          coerceNumber(data?.result?.suggestedOrientationDeg);
+        const suggestedAz =
+          coerceNumber(data?.suggestedAzimuthDeg) ??
+          coerceNumber(data?.result?.suggestedAzimuthDeg);
+
+        const seedOrient = suggestedOrient ?? polygonMajorAxisDeg(selected);
+        if (mPerPx) {
+          const best = bestPackingOrientationDeg({
+            polygon: selected,
+            mPerPx,
+            panelSpec,
+            seedDeg: seedOrient,
+          });
+          setOrientationDeg(best);
+        } else {
+          setOrientationDeg(clampAngle90(seedOrient));
+        }
+        if (suggestedAz !== null) {
+          const az = ((suggestedAz % 360) + 360) % 360;
+          setAzimuthDeg(az);
+        }
+
+        setVertices(selected);
+        setClosed(true);
+
+        if (!hint && reason === "auto" && candidates.length > 1) {
+          hint = "Multiple nearby roofs detected. Click the correct outline if needed.";
+        }
+        if (!hint && note) hint = note;
+        if (hint) setAutoOutlineHint(hint);
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        setAutoOutlineError(e instanceof Error ? e.message : "Auto-outline failed.");
+      } finally {
+        if (!ac.signal.aborted) setAutoOutlineBusy(false);
+      }
+    },
+    [addressStatic, mPerPx, mapInput, panelSpec]
+  );
+
+  // Address flow: after a successful search, fetch one static satellite image and
+  // auto-detect the roof immediately (no extra "Auto-outline" click needed).
+  useEffect(() => {
+    if (!panelsMounted) return;
+    if (mapInput.kind !== "address") return;
+    if (!addressStatic) return;
+
+    const key = `addr:${addressStatic.meta.lat.toFixed(6)}:${addressStatic.meta.lng.toFixed(6)}:${addressStatic.meta.zoom}`;
+    if (lastAutoSegmentKeyRef.current === key) return;
+    lastAutoSegmentKeyRef.current = key;
+
+    setVertices([]);
+    setClosed(false);
+    setCandidatePolygons(null);
+    setAutoOutlineError(null);
+    setAutoOutlineHint(null);
+
+    void runAutoOutline({ reason: "auto" });
+  }, [addressStatic, mapInput.kind, panelsMounted, runAutoOutline]);
+
+  const pickCandidate = useCallback(
+    (id: string) => {
+      const c = candidatePolygons?.find((p) => p.id === id);
+      if (!c) return;
+      setVertices(c.polygon);
       setClosed(true);
-    } catch {
-      // ignore
-    }
-  }
+      setCandidatePolygons(null);
+      setAutoOutlineHint(null);
+
+      if (mPerPx) {
+        const best = bestPackingOrientationDeg({
+          polygon: c.polygon,
+          mPerPx,
+          panelSpec,
+          seedDeg: orientationDeg,
+        });
+        setOrientationDeg(best);
+      }
+    },
+    [candidatePolygons, mPerPx, orientationDeg, panelSpec]
+  );
 
   const shareUrl = useMemo(() => {
     if (!shareSlug) return null;
@@ -617,22 +1194,36 @@ export function SunnyviewExperience() {
         panels={panels}
         onVerticesChange={(v) => {
           setVertices(v);
+          setCandidatePolygons(null);
+          setAutoOutlineError(null);
+          setAutoOutlineHint(null);
           if (v.length < 3) setClosed(false);
         }}
         onClosedChange={setClosed}
-        onAutoOutline={runAutoOutline}
+        onAutoOutline={() => runAutoOutline({ reason: "manual" })}
+        autoOutlineBusy={autoOutlineBusy}
+        autoOutlineError={autoOutlineError}
+        autoOutlineHint={autoOutlineHint}
+        candidatePolygons={candidatePolygons}
+        onPickCandidate={pickCandidate}
+        centerPin={
+          addressStatic
+            ? { x: addressStatic.widthPx / 2, y: addressStatic.heightPx / 2 }
+            : null
+        }
       />
     </div>
   );
 
   const rightPanel = (
     <div className="space-y-4">
-      <StaticMapPhoto
+      <SolarForecastCard
         className="glass-card p-4"
-        address={mapInput.kind === "address" ? mapInput.address : null}
         lat={lat}
         lng={lng}
-        zoom={zoom}
+        dcKw={dcKw}
+        lossesPct={lossesPct}
+        panelCount={panelCount}
       />
 
       <div className="glass-card p-4">
@@ -667,6 +1258,71 @@ export function SunnyviewExperience() {
               <AnimatedNumber value={estimate.annualCo2Kg} />
             </div>
           </div>
+        </div>
+
+        <div className="glass-surface mt-3 rounded-lg p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold text-foreground">Panel model</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {panelChoiceLabel} • {panelSpecMode === "auto" ? "auto" : "manual"} • {panelSpec.widthM.toFixed(2)}m × {panelSpec.heightM.toFixed(2)}m • {Math.round(panelSpec.wattW)}W
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+                onClick={() => {
+                  setPanelSpecMode((m) => (m === "auto" ? "manual" : "auto"))
+                  setPanelBrandRec(null)
+                  setPanelBrandError(null)
+                  lastPanelAutoKeyRef.current = null
+                  setPanelBrandReqSeq((s) => s + 1)
+                }}
+                title={panelSpecMode === "auto" ? "Switch to manual panel sizing" : "Switch back to auto"}
+              >
+                {panelSpecMode === "auto" ? "Manual" : "Auto"}
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80 disabled:opacity-50"
+                onClick={() => {
+                  setPanelBrandRec(null)
+                  setPanelBrandError(null)
+                  setPanelBrandReqSeq((s) => s + 1)
+                }}
+                disabled={panelCount === 0}
+                title="Re-run Gemini recommendation"
+              >
+                {panelBrandBusy ? "Gemini…" : "Ask Gemini"}
+              </button>
+            </div>
+          </div>
+
+          {panelBrandRec && (
+            <div className="mt-2 text-xs text-muted-foreground">
+              <div className="text-foreground">
+                Gemini pick: <span className="font-medium">{panelBrandRec.brand}</span> — {panelBrandRec.model}
+              </div>
+              {panelBrandRec.why?.length ? (
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {panelBrandRec.why.slice(0, 3).map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          )}
+          {panelBrandError && (
+            <div className="mt-2 text-xs text-muted-foreground">
+              Gemini unavailable: <span className="text-muted-foreground">{panelBrandError}</span>
+            </div>
+          )}
+          {panelBrandRec?.caveats?.length ? (
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {panelBrandRec.caveats.slice(0, 2).join(" ")}
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -739,12 +1395,14 @@ export function SunnyviewExperience() {
               <input
                 className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
                 value={panelSpec.widthM}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPanelSpecMode("manual")
+                  setPanelChoiceId("custom")
                   setPanelSpec((p) => ({
                     ...p,
                     widthM: Number(e.target.value) || p.widthM,
                   }))
-                }
+                }}
                 inputMode="decimal"
               />
             </label>
@@ -753,12 +1411,14 @@ export function SunnyviewExperience() {
               <input
                 className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
                 value={panelSpec.heightM}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPanelSpecMode("manual")
+                  setPanelChoiceId("custom")
                   setPanelSpec((p) => ({
                     ...p,
                     heightM: Number(e.target.value) || p.heightM,
                   }))
-                }
+                }}
                 inputMode="decimal"
               />
             </label>
@@ -767,12 +1427,14 @@ export function SunnyviewExperience() {
               <input
                 className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
                 value={panelSpec.wattW}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPanelSpecMode("manual")
+                  setPanelChoiceId("custom")
                   setPanelSpec((p) => ({
                     ...p,
                     wattW: Number(e.target.value) || p.wattW,
                   }))
-                }
+                }}
                 inputMode="numeric"
               />
             </label>
@@ -781,12 +1443,14 @@ export function SunnyviewExperience() {
               <input
                 className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
                 value={panelSpec.gapM}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setPanelSpecMode("manual")
+                  setPanelChoiceId("custom")
                   setPanelSpec((p) => ({
                     ...p,
                     gapM: Number(e.target.value) || p.gapM,
                   }))
-                }
+                }}
                 inputMode="decimal"
               />
             </label>

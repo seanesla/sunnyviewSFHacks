@@ -38,6 +38,48 @@ function isLikelyUrl(s: string) {
   return /^https?:\/\//i.test(s) || s.startsWith("/")
 }
 
+async function detectLocalSegmenter(): Promise<string | null> {
+  if (process.env.NODE_ENV === "production") return null
+  const bases = ["http://127.0.0.1:8000", "http://localhost:8000"]
+  for (const base of bases) {
+    const ac = new AbortController()
+    const t = setTimeout(() => ac.abort(), 350)
+    try {
+      const res = await fetch(`${base}/healthz`, { signal: ac.signal, headers: { accept: "application/json" } })
+      if (res.ok) return base
+    } catch {
+      // ignore
+    } finally {
+      clearTimeout(t)
+    }
+  }
+  return null
+}
+
+function fallbackRectRoofPolygon(params: { widthPx: number; heightPx: number; zoom: number; scale?: number | null }) {
+  // Pick a conservative residential roof rectangle (~14m x ~9m) centered in the image.
+  // This is only used when neither CV nor OSM footprints are available.
+  const R = 6378137
+  const resMPerPx = (2 * Math.PI * R) / (256 * Math.pow(2, Math.round(clamp(params.zoom, 0, 22))))
+  const s = typeof params.scale === "number" && Number.isFinite(params.scale) ? Math.max(1, Math.min(2, Math.round(params.scale))) : 2
+  const mPerPxOut = resMPerPx / s
+  const roofWm = 14
+  const roofHm = 9
+  const wPx = Math.min(params.widthPx * 0.45, Math.max(30, roofWm / mPerPxOut))
+  const hPx = Math.min(params.heightPx * 0.45, Math.max(30, roofHm / mPerPxOut))
+  const cx = params.widthPx / 2
+  const cy = params.heightPx / 2
+  const x0 = clamp(cx - wPx / 2, 0, params.widthPx)
+  const x1 = clamp(cx + wPx / 2, 0, params.widthPx)
+  const y0 = clamp(cy - hPx / 2, 0, params.heightPx)
+  const y1 = clamp(cy + hPx / 2, 0, params.heightPx)
+  const toN = (x: number, y: number) => [x / params.widthPx, y / params.heightPx]
+  return {
+    type: "Polygon",
+    coordinates: [[toN(x0, y0), toN(x1, y0), toN(x1, y1), toN(x0, y1)]],
+  }
+}
+
 async function imageUrlToDataUrl(imageUrl: string, reqUrl: string) {
   const abs = new URL(imageUrl, reqUrl)
   const res = await fetch(abs.toString(), { cache: "no-store", headers: { accept: "image/*" } })
@@ -55,7 +97,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 })
   }
 
-  const svc = process.env.SEGMENT_SERVICE_URL?.trim()
+  let svc = process.env.SEGMENT_SERVICE_URL?.trim() || null
+  if (!svc) svc = await detectLocalSegmenter()
   const mode = parsed.data.mode ?? "roof"
   const clicks = parsed.data.clicks
   const roi = parsed.data.roi
@@ -159,27 +202,54 @@ export async function POST(req: Request) {
           )
         }
       } catch (e) {
+        // Overpass is an external dependency; don't hard-fail the UX.
+        const poly = fallbackRectRoofPolygon({
+          widthPx: metaW,
+          heightPx: metaH,
+          zoom: metaZoom,
+          scale: num((meta as any)?.staticMap?.scale),
+        })
         return NextResponse.json(
-          { error: e instanceof Error ? e.message : "Overpass failed", source: "osm_error" },
-          { status: 502 }
+          {
+            roofPolygon: poly,
+            source: "fallback_rect",
+            confidence: 0.15,
+            note:
+              (e instanceof Error ? e.message : "Overpass failed") +
+              ". Using a rough rectangle. For reliable auto-outline, run the Python segmenter and set SEGMENT_SERVICE_URL.",
+          },
+          { status: 200 }
         )
       }
 
+      const poly = fallbackRectRoofPolygon({
+        widthPx: metaW,
+        heightPx: metaH,
+        zoom: metaZoom,
+        scale: num((meta as any)?.staticMap?.scale),
+      })
       return NextResponse.json(
         {
-          error: "No building footprint found near this address.",
-          note: "Trace the roof manually.",
+          roofPolygon: poly,
+          source: "fallback_rect",
+          confidence: 0.15,
+          note: "No building footprint found near this address. Using a rough rectangle; trace manually or run the Python segmenter (SEGMENT_SERVICE_URL).",
         },
-        { status: 404 }
+        { status: 200 }
       )
     }
 
     return NextResponse.json(
       {
-        error: "SEGMENT_SERVICE_URL not configured",
-        note: "Provide meta {lat,lng,zoom,widthPx,heightPx} for OSM footprint fallback, or set SEGMENT_SERVICE_URL for CV segmentation.",
+        roofPolygon: {
+          type: "Polygon",
+          coordinates: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]],
+        },
+        source: "fallback_rect",
+        confidence: 0.1,
+        note: "Auto-outline fallback: SEGMENT_SERVICE_URL not configured and no map metadata available. Using a small rectangle; trace manually or run the Python segmenter.",
       },
-      { status: 501 }
+      { status: 200 }
     )
   }
 
@@ -265,6 +335,8 @@ export async function POST(req: Request) {
         const scored = rankBuildingCandidates({ elements, tf, focusPx, address: metaAddress })
         const best = scored[0]
         if (best) {
+          const footprint = normalizeCandidatePolygon(best, tf)
+
           // Default click at footprint centroid.
           if (!guidedClicks || guidedClicks.length === 0) {
             const centroidMerc = {
@@ -297,7 +369,14 @@ export async function POST(req: Request) {
           }
 
           if (guidedMeta && typeof guidedMeta === "object") {
-            guidedMeta = { ...(guidedMeta as any), osmBestId: best.id, osmSource: "guided" }
+            guidedMeta = {
+              ...(guidedMeta as any),
+              osmBestId: best.id,
+              osmSource: "guided",
+              // Normalized GeoJSON polygon for the building footprint we believe matches the address.
+              // CV services can use this to keep only the roof attached to the requested address.
+              osmFootprint: footprint,
+            }
           }
         }
       } catch {
