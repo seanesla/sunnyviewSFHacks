@@ -18,7 +18,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { apiOrigin, apiUrl } from "@/lib/api";
 import { buildStaticMapSpec } from "@/lib/static-map";
 import { PANEL_OPTIONS } from "@/lib/panels";
-import { polygonAreaPx2, splitFootprintIntoPlanes } from "@/lib/roof-plane";
+import { polygonAreaPx2 } from "@/lib/roof-plane";
 import { cn } from "@/lib/utils";
 
 type Phase = "landing" | "opening" | "app";
@@ -49,74 +49,77 @@ function clampAngle90(deg: number) {
   return d;
 }
 
-function polygonMajorAxisDeg(poly: Point[]) {
-  if (poly.length < 3) return 0;
-  const c = poly.reduce(
-    (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
-    { x: 0, y: 0 }
-  );
-  const cx = c.x / poly.length;
-  const cy = c.y / poly.length;
-  let xx = 0;
-  let yy = 0;
-  let xy = 0;
-  for (const p of poly) {
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    xx += dx * dx;
-    yy += dy * dy;
-    xy += dx * dy;
-  }
-  const n = Math.max(1, poly.length);
-  xx /= n;
-  yy /= n;
-  xy /= n;
-  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
-  return clampAngle90((angle * 180) / Math.PI);
+function normAxis90(deg: number) {
+  let d = deg % 90;
+  if (d < 0) d += 90;
+  // keep inside [0, 90)
+  if (d >= 90) d -= 90;
+  return d;
 }
 
-function bestPackingOrientationDeg(opts: {
+function polygonDominantEdgeAxisDeg(poly: Point[]) {
+  if (poly.length < 3) return 0;
+
+  let sumCos = 0;
+  let sumSin = 0;
+  let wSum = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (!(len > 4)) continue;
+    const angDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    const axisDeg = normAxis90(angDeg);
+    const r = (axisDeg * Math.PI) / 180;
+    // Period = 90deg -> use 4x angle for circular mean.
+    sumCos += len * Math.cos(4 * r);
+    sumSin += len * Math.sin(4 * r);
+    wSum += len;
+  }
+
+  if (!(wSum > 0) || (!Number.isFinite(sumCos) && !Number.isFinite(sumSin))) return 0;
+  const mean = Math.atan2(sumSin, sumCos) / 4;
+  const meanDeg = (mean * 180) / Math.PI;
+  return normAxis90(meanDeg);
+}
+
+function bestRoofAlignedPackingOrientationDeg(opts: {
   polygon: Point[];
   mPerPx: number;
   panelSpec: PanelSpec;
-  seedDeg: number;
+  axisDeg: number;
 }) {
-  const seed = clampAngle90(opts.seedDeg);
+  const axis = normAxis90(opts.axisDeg);
+  const bases = [clampAngle90(axis), clampAngle90(axis + 90)];
+  const offsets = [-2, -1, 0, 1, 2];
   const panel = { widthM: opts.panelSpec.widthM, heightM: opts.panelSpec.heightM, gapM: opts.panelSpec.gapM };
 
-  const score = (deg: number) =>
-    packPanelsDeterministic({
-      usablePolygon: opts.polygon,
-      mPerPx: opts.mPerPx,
-      panel,
-      orientationDeg: deg,
-    }).length;
-
-  let bestDeg = seed;
-  let bestCount = score(bestDeg);
-
-  // Coarse sweep around seed.
-  for (let d = -45; d <= 45; d += 5) {
-    const cand = clampAngle90(seed + d);
-    const cnt = score(cand);
-    if (cnt > bestCount) {
-      bestCount = cnt;
-      bestDeg = cand;
+  let bestDeg = bases[0];
+  let bestCount = -Infinity;
+  let bestOffsetAbs = Infinity;
+  for (const base of bases) {
+    for (const off of offsets) {
+      const deg = clampAngle90(base + off);
+      const count = packPanelsDeterministic({
+        usablePolygon: opts.polygon,
+        mPerPx: opts.mPerPx,
+        panel,
+        orientationDeg: deg,
+      }).length;
+      const offAbs = Math.abs(off);
+      if (count > bestCount || (count === bestCount && offAbs < bestOffsetAbs)) {
+        bestCount = count;
+        bestDeg = deg;
+        bestOffsetAbs = offAbs;
+      }
     }
   }
-
-  // Fine sweep.
-  for (let d = -10; d <= 10; d += 1) {
-    const cand = clampAngle90(bestDeg + d);
-    const cnt = score(cand);
-    if (cnt > bestCount) {
-      bestCount = cnt;
-      bestDeg = cand;
-    }
-  }
-
   return bestDeg;
 }
+
+// (legacy) wide-sweep orientation search removed in favor of roof-aligned packing.
 
 function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
   const scaleIfNormalized = (pts: Point[]) => {
@@ -390,6 +393,7 @@ export function SunnyviewExperience() {
   const [panelBrandBusy, setPanelBrandBusy] = useState(false);
   const [panelBrandError, setPanelBrandError] = useState<string | null>(null);
   const lastPanelAutoKeyRef = useRef<string | null>(null);
+  const [panelAutoReadyKey, setPanelAutoReadyKey] = useState<string | null>(null);
   const [panelBrandReqSeq, setPanelBrandReqSeq] = useState(0);
   const panelBrandAbortRef = useRef<AbortController | null>(null);
   const lastPanelBrandAutoAddrKeyRef = useRef<string | null>(null);
@@ -417,6 +421,7 @@ export function SunnyviewExperience() {
     lng: null,
   });
   const [orientationDeg, setOrientationDeg] = useState<number>(0);
+  const [roofAxisHintDeg, setRoofAxisHintDeg] = useState<number | null>(null);
   const [tiltDeg, setTiltDeg] = useState<number>(20);
   const [azimuthDeg, setAzimuthDeg] = useState<number>(180);
   const [lossesPct, setLossesPct] = useState<number>(14);
@@ -497,18 +502,15 @@ export function SunnyviewExperience() {
     if (panelSpecMode !== "auto") return;
     if (!closed || vertices.length < 3 || !mPerPx) return;
 
+     const axisDeg = roofAxisHintDeg ?? polygonDominantEdgeAxisDeg(vertices);
+
     const key = `roof:${Math.round((roofAreaM2 ?? 0) * 10) / 10}:${vertices.length}:${Math.round(mPerPx * 1e6)}`;
     if (lastPanelAutoKeyRef.current === key) return;
     lastPanelAutoKeyRef.current = key;
 
     let best = { id: PANEL_OPTIONS[0]?.id ?? "custom", spec: PANEL_OPTIONS[0]?.spec ?? panelSpec, orient: 0, dc: -Infinity };
     for (const c of PANEL_OPTIONS) {
-      const orient = bestPackingOrientationDeg({
-        polygon: vertices,
-        mPerPx,
-        panelSpec: c.spec,
-        seedDeg: polygonMajorAxisDeg(vertices),
-      });
+      const orient = bestRoofAlignedPackingOrientationDeg({ polygon: vertices, mPerPx, panelSpec: c.spec, axisDeg });
       const count = packPanelsDeterministic({
         usablePolygon: vertices,
         mPerPx,
@@ -524,6 +526,7 @@ export function SunnyviewExperience() {
     setPanelChoiceId(best.id);
     setPanelSpec(best.spec);
     setOrientationDeg(best.orient);
+    setPanelAutoReadyKey(key);
     setPanelBrandRec(null);
     setPanelBrandError(null);
   }, [
@@ -534,7 +537,14 @@ export function SunnyviewExperience() {
     panelsMounted,
     roofAreaM2,
     vertices,
+    roofAxisHintDeg,
   ]);
+
+  useEffect(() => {
+    if (panelSpecMode === "auto") return;
+    lastPanelAutoKeyRef.current = null;
+    setPanelAutoReadyKey(null);
+  }, [panelSpecMode]);
 
   useEffect(() => {
     if (!panelsMounted) return;
@@ -552,7 +562,6 @@ export function SunnyviewExperience() {
 
     const vertices = ctx.vertices;
     const mPerPx = ctx.mPerPx;
-    const orientationDeg = ctx.orientationDeg;
     const panelSpec = ctx.panelSpec;
     const panelSpecMode = ctx.panelSpecMode;
     const panelChoiceId = ctx.panelChoiceId;
@@ -567,6 +576,8 @@ export function SunnyviewExperience() {
     setPanelBrandBusy(true);
     setPanelBrandError(null);
 
+    const axisDeg = polygonDominantEdgeAxisDeg(vertices);
+
     const fits: Array<{
       id: string;
       label: string;
@@ -576,12 +587,7 @@ export function SunnyviewExperience() {
       spec: { widthM: number; heightM: number; wattW: number; gapM: number };
       fit: { panelCount: number; dcKw: number; orientationDeg: number };
     }> = PANEL_OPTIONS.map((o) => {
-      const orient = bestPackingOrientationDeg({
-        polygon: vertices,
-        mPerPx,
-        panelSpec: o.spec,
-        seedDeg: polygonMajorAxisDeg(vertices),
-      });
+      const orient = bestRoofAlignedPackingOrientationDeg({ polygon: vertices, mPerPx, panelSpec: o.spec, axisDeg });
       const count = packPanelsDeterministic({
         usablePolygon: vertices,
         mPerPx,
@@ -601,12 +607,7 @@ export function SunnyviewExperience() {
     });
 
     if (panelSpecMode === "manual") {
-      const orient = bestPackingOrientationDeg({
-        polygon: vertices,
-        mPerPx,
-        panelSpec,
-        seedDeg: polygonMajorAxisDeg(vertices),
-      });
+      const orient = bestRoofAlignedPackingOrientationDeg({ polygon: vertices, mPerPx, panelSpec, axisDeg });
       const count = packPanelsDeterministic({
         usablePolygon: vertices,
         mPerPx,
@@ -749,6 +750,14 @@ export function SunnyviewExperience() {
         setPanels([]);
         return;
       }
+
+      const key = `roof:${Math.round((roofAreaM2 ?? 0) * 10) / 10}:${vertices.length}:${Math.round(mPerPx * 1e6)}`;
+      if (panelSpecMode === "auto" && panelAutoReadyKey !== key) {
+        // Wait until auto panel sizing/pick runs for this roof.
+        setPanels([]);
+        return;
+      }
+
       setPanels(
         packPanelsDeterministic({
           usablePolygon: vertices,
@@ -768,9 +777,12 @@ export function SunnyviewExperience() {
     closed,
     vertices,
     mPerPx,
+    panelAutoReadyKey,
     panelSpec.widthM,
     panelSpec.heightM,
     panelSpec.gapM,
+    panelSpecMode,
+    roofAreaM2,
     orientationDeg,
   ]);
 
@@ -1263,28 +1275,7 @@ export function SunnyviewExperience() {
         let selected = primary;
         let hint: string | null = null;
 
-        // When the outline is an OSM building footprint (not a true roof plane),
-        // panel counts can be wildly inflated because we treat the whole footprint
-        // as one flat, usable surface. For small residential roofs, split the
-        // footprint into two likely planes and pick one.
-        if (looksLikeFootprint && candidates.length === 0 && mPerPx) {
-          const areaM2 = polygonAreaPx2(primary) * mPerPx * mPerPx;
-          const focusPx = { x: request.w / 2, y: request.h / 2 };
-          if (areaM2 > 8 && areaM2 < 240) {
-            const split = splitFootprintIntoPlanes({
-              footprint: primary,
-              focusPx,
-            });
-            if (split) {
-              selected = split.chosen;
-              setCandidatePolygons(split.planes);
-              hint =
-                source?.includes("passthrough") || source?.includes("sam_error")
-                  ? "CV model not active; using an OSM footprint + single-plane estimate. Configure SAM_CHECKPOINT for best accuracy."
-                  : "Using a single roof plane estimate (from OSM footprint). Click the other outline if needed.";
-            }
-          }
-        }
+        // Keep the full roof outline as returned. (Single-plane selection is optional and should not replace the roof mask.)
 
         // Auto-orient panels from CV (preferred) or polygon geometry.
         const suggestedOrient =
@@ -1294,17 +1285,21 @@ export function SunnyviewExperience() {
           coerceNumber(data?.suggestedAzimuthDeg) ??
           coerceNumber(data?.result?.suggestedAzimuthDeg);
 
-        const seedOrient = suggestedOrient ?? polygonMajorAxisDeg(selected);
+        const axisHint = suggestedOrient !== null ? normAxis90(suggestedOrient) : null;
+        setRoofAxisHintDeg(axisHint);
+
+        const axisDeg = axisHint ?? polygonDominantEdgeAxisDeg(selected);
         if (mPerPx) {
-          const best = bestPackingOrientationDeg({
-            polygon: selected,
-            mPerPx,
-            panelSpec,
-            seedDeg: seedOrient,
-          });
-          setOrientationDeg(best);
+          setOrientationDeg(
+            bestRoofAlignedPackingOrientationDeg({
+              polygon: selected,
+              mPerPx,
+              panelSpec,
+              axisDeg,
+            })
+          );
         } else {
-          setOrientationDeg(clampAngle90(seedOrient));
+          setOrientationDeg(clampAngle90(axisDeg));
         }
         if (suggestedAz !== null) {
           const az = ((suggestedAz % 360) + 360) % 360;
@@ -1345,6 +1340,9 @@ export function SunnyviewExperience() {
     setCandidatePolygons(null);
     setAutoOutlineError(null);
     setAutoOutlineHint(null);
+    setRoofAxisHintDeg(null);
+    setPanelAutoReadyKey(null);
+    lastPanelAutoKeyRef.current = null;
 
     void runAutoOutline({ reason: "auto" });
   }, [addressStatic, mapInput.kind, panelsMounted, runAutoOutline]);
@@ -1355,20 +1353,18 @@ export function SunnyviewExperience() {
       if (!c) return;
       setVertices(c.polygon);
       setClosed(true);
+      setRoofAxisHintDeg(null);
+      setPanelAutoReadyKey(null);
+      lastPanelAutoKeyRef.current = null;
       setCandidatePolygons(null);
       setAutoOutlineHint(null);
 
       if (mPerPx) {
-        const best = bestPackingOrientationDeg({
-          polygon: c.polygon,
-          mPerPx,
-          panelSpec,
-          seedDeg: orientationDeg,
-        });
-        setOrientationDeg(best);
+        const axisDeg = polygonDominantEdgeAxisDeg(c.polygon);
+        setOrientationDeg(bestRoofAlignedPackingOrientationDeg({ polygon: c.polygon, mPerPx, panelSpec, axisDeg }));
       }
     },
-    [candidatePolygons, mPerPx, orientationDeg, panelSpec]
+    [candidatePolygons, mPerPx, panelSpec]
   );
 
   const shareUrl = useMemo(() => {
@@ -1472,6 +1468,9 @@ export function SunnyviewExperience() {
         panels={panels}
         onVerticesChange={(v) => {
           setVertices(v);
+          setRoofAxisHintDeg(null);
+          setPanelAutoReadyKey(null);
+          lastPanelAutoKeyRef.current = null;
           setCandidatePolygons(null);
           setAutoOutlineError(null);
           setAutoOutlineHint(null);
@@ -1480,6 +1479,9 @@ export function SunnyviewExperience() {
             setCandidatePolygons(null);
             setAutoOutlineHint(null);
             setAutoOutlineError(null);
+            setRoofAxisHintDeg(null);
+            setPanelAutoReadyKey(null);
+            lastPanelAutoKeyRef.current = null;
           }
         }}
         onClosedChange={setClosed}

@@ -413,17 +413,6 @@ export function RoofCanvas({
           ctx.stroke()
         }
       }
-    } else if (mode === "edit") {
-      ctx.fillStyle = "rgba(255,255,255,0.88)"
-      ctx.font = "14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto"
-      ctx.textAlign = "center"
-      ctx.fillText(
-        tool === "rectangle"
-          ? "Drag to draw a rectangle that bounds the usable roof area."
-          : "Click to trace the usable roof area. Double-click (or press Finish) to close.",
-        internalSize.w / 2,
-        internalSize.h / 2
-      )
     }
 
     // Rectangle draft (before commit)
@@ -478,8 +467,6 @@ export function RoofCanvas({
       ctx.restore()
     }
 
-    ctx.restore()
-
     // Candidate outlines (disambiguation)
     if (mode === "edit" && candidatePolygons && candidatePolygons.length > 0) {
       const colors = [
@@ -500,19 +487,25 @@ export function RoofCanvas({
         ctx.strokeStyle = colors[idx % colors.length]
         ctx.lineWidth = 2 * uiScale
         ctx.stroke()
-        ctx.fillStyle = "rgba(0,0,0,0.16)"
+        ctx.fillStyle = "rgba(0,0,0,0.14)"
         ctx.fill()
 
-        // label near first vertex
+        // Label near first vertex (keep readable under zoom).
         const p0 = poly[0]
+        const pad = 6 * uiScale
+        const boxW = 92 * uiScale
+        const boxH = 18 * uiScale
         ctx.fillStyle = "rgba(0,0,0,0.65)"
-        ctx.fillRect(p0.x + 6, p0.y + 6, 86, 18)
+        ctx.fillRect(p0.x + pad, p0.y + pad, boxW, boxH)
         ctx.fillStyle = "rgba(255,255,255,0.92)"
-        ctx.font = "11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto"
-        ctx.fillText(`Roof ${idx + 1}`, p0.x + 12, p0.y + 19)
+        ctx.font = `${11 * uiScale}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto`
+        ctx.textAlign = "left"
+        ctx.fillText(`Option ${idx + 1}`, p0.x + pad + 6 * uiScale, p0.y + pad + 13 * uiScale)
         ctx.restore()
       })
     }
+
+    ctx.restore()
 
     // Overlay pill
     ctx.fillStyle = "rgba(0,0,0,0.55)"
