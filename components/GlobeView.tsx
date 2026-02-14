@@ -25,6 +25,7 @@ export function GlobeView({
   frame?: boolean
   variant?: "app" | "hero"
 }) {
+  const isHero = variant === "hero"
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<import("cesium").Viewer | null>(null)
   const markerEntityRef = useRef<import("cesium").Entity | null>(null)
@@ -34,7 +35,7 @@ export function GlobeView({
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const isHero = variant === "hero"
+  const showLoader = !ready
   const landingActive = !interactive && Boolean(onPrimaryClick)
   const hasLocation = Number.isFinite(lat ?? NaN) && Number.isFinite(lng ?? NaN)
   const locationLabel = useMemo(() => {
@@ -45,8 +46,28 @@ export function GlobeView({
   useEffect(() => {
     let cancelled = false
     let ro: ResizeObserver | null = null
+    let startupRaf: number | null = null
+    let startupTimer: number | null = null
+    setReady(false)
+    setError(null)
     ;(async () => {
       try {
+        await new Promise<void>((resolve) => {
+          startupRaf = window.requestAnimationFrame(() => {
+            startupRaf = null
+            resolve()
+          })
+        })
+        if (cancelled) return
+
+        await new Promise<void>((resolve) => {
+          startupTimer = window.setTimeout(() => {
+            startupTimer = null
+            resolve()
+          }, 60)
+        })
+        if (cancelled) return
+
         const Cesium: CesiumModule = await import("cesium")
         if (cancelled) return
 
@@ -68,6 +89,7 @@ export function GlobeView({
           animation: false,
           timeline: false,
           baseLayerPicker: false,
+          baseLayer: false,
           geocoder: false,
           sceneModePicker: false,
           homeButton: false,
@@ -75,11 +97,33 @@ export function GlobeView({
           fullscreenButton: false,
           infoBox: false,
           selectionIndicator: false,
-          shouldAnimate: true,
+          shouldAnimate: false,
+          requestRenderMode: true,
+          maximumRenderTimeChange: Infinity,
+          scene3DOnly: true,
           contextOptions: isHero ? ({ webgl: { alpha: true } } as any) : undefined,
         })
 
         viewerRef.current = viewer
+        viewer.useBrowserRecommendedResolution = true
+        if (isHero) {
+          viewer.resolutionScale = 0.9
+        }
+
+        if (isHero) {
+          viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT
+          viewer.scene.fog.enabled = false
+          if (viewer.scene.skyBox) viewer.scene.skyBox.show = false
+          if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false
+          if (viewer.scene.sun) viewer.scene.sun.show = false
+          if (viewer.scene.moon) viewer.scene.moon.show = false
+          viewer.scene.globe.enableLighting = false
+          viewer.scene.globe.showGroundAtmosphere = false
+        } else {
+          viewer.scene.globe.enableLighting = true
+          if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
+          viewer.scene.fog.enabled = true
+        }
 
         // Imagery:
         // - App: prefer ion if token is present.
@@ -97,30 +141,76 @@ export function GlobeView({
             if (!liveViewer) return
             liveViewer.imageryLayers.removeAll()
             liveViewer.imageryLayers.addImageryProvider(provider)
+            liveViewer.scene.requestRender()
           } catch {
             // If imagery fails to load, keep the globe untextured.
           }
         }
-        void loadImagery()
+        await loadImagery()
+        if (cancelled) return
 
-        if (isHero) {
-          viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT
-          viewer.scene.fog.enabled = false
-          if (viewer.scene.skyBox) viewer.scene.skyBox.show = false
-          if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false
-          if (viewer.scene.sun) viewer.scene.sun.show = false
-          if (viewer.scene.moon) viewer.scene.moon.show = false
-          viewer.scene.globe.enableLighting = false
-          viewer.scene.globe.showGroundAtmosphere = false
-        } else {
-          viewer.scene.globe.enableLighting = true
-          if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
-          viewer.scene.fog.enabled = true
-        }
+        await new Promise<void>((resolve) => {
+          const liveViewer = viewerRef.current
+          if (!liveViewer) {
+            resolve()
+            return
+          }
+
+          const globe = liveViewer.scene.globe
+          let done = false
+          let tileTimeout = 0
+          let checkRaf: number | null = null
+
+          const finish = () => {
+            if (done) return
+            done = true
+            try {
+              globe.tileLoadProgressEvent.removeEventListener(onTileProgress)
+            } catch {
+              // ignore
+            }
+            window.clearTimeout(tileTimeout)
+            if (checkRaf !== null) {
+              window.cancelAnimationFrame(checkRaf)
+              checkRaf = null
+            }
+            resolve()
+          }
+
+          const onTileProgress = (remainingTiles: number) => {
+            if (remainingTiles === 0) {
+              finish()
+            }
+          }
+
+          try {
+            globe.tileLoadProgressEvent.addEventListener(onTileProgress)
+          } catch {
+            resolve()
+            return
+          }
+
+          tileTimeout = window.setTimeout(finish, 9000)
+
+          checkRaf = window.requestAnimationFrame(() => {
+            checkRaf = null
+            if (globe.tilesLoaded) {
+              finish()
+              return
+            }
+            try {
+              liveViewer.scene.requestRender()
+            } catch {
+              finish()
+            }
+          })
+        })
+        if (cancelled) return
 
         ro = new ResizeObserver(() => {
           try {
             viewer.resize()
+            viewer.scene.requestRender()
           } catch {
             // ignore
           }
@@ -146,6 +236,14 @@ export function GlobeView({
         // ignore
       }
       ro = null
+      if (startupRaf !== null) {
+        window.cancelAnimationFrame(startupRaf)
+        startupRaf = null
+      }
+      if (startupTimer !== null) {
+        window.clearTimeout(startupTimer)
+        startupTimer = null
+      }
       if (clickSpinRafRef.current !== null) {
         window.cancelAnimationFrame(clickSpinRafRef.current)
         clickSpinRafRef.current = null
@@ -212,6 +310,7 @@ export function GlobeView({
       landingSpinLastNowRef.current = now
       try {
         viewerNow.camera.rotateRight(speedRadPerSec * dt)
+        viewerNow.scene.requestRender()
       } catch {
         return
       }
@@ -265,6 +364,7 @@ export function GlobeView({
       } else {
         markerEntityRef.current.position = position as any
       }
+      viewer.scene.requestRender()
     })()
   }, [ready, hasLocation, lat, lng])
 
@@ -313,6 +413,7 @@ export function GlobeView({
       const dt = Math.min(0.05, (now - lastNow) / 1000)
       lastNow = now
       viewerNow.camera.rotateRight(velocity * dt)
+      viewerNow.scene.requestRender()
 
       if (t >= 1) {
         clickSpinRafRef.current = null
@@ -355,12 +456,16 @@ export function GlobeView({
       {!error && (
         <div
           className={cn(
-            "absolute inset-0 z-10 grid place-items-center transition-opacity duration-200 ease-out motion-reduce:duration-0",
-            ready ? "pointer-events-none opacity-0" : "opacity-100",
+            "absolute inset-0 z-10 grid place-items-center overflow-hidden transition-opacity duration-200 ease-out motion-reduce:duration-0",
+            showLoader ? "opacity-100" : "pointer-events-none opacity-0",
             isHero ? "bg-transparent" : "bg-gradient-to-b from-black/10 via-black/20 to-black/40"
           )}
         >
-          <SunnyviewLogoLoader />
+          {isHero ? (
+            <div className="absolute inset-0 bg-black" aria-hidden />
+          ) : null}
+
+          <SunnyviewLogoLoader className="relative z-[1]" />
         </div>
       )}
 
