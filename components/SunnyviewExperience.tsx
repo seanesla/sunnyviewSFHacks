@@ -68,7 +68,7 @@ export function SunnyviewExperience() {
   const opened = phase !== "landing"
   const opening = phase === "opening"
   const [focusEarth, setFocusEarth] = useState(false)
-  const globeInteractive = phase === "app" && focusEarth
+  const globeInteractive = phase === "app"
   const [panelsMounted, setPanelsMounted] = useState(false)
   const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup")
 
@@ -698,7 +698,7 @@ export function SunnyviewExperience() {
         </Link>
       </div>
 
-      <div className="relative z-20 mx-auto h-full max-w-screen-2xl px-4 py-7 sm:px-6 sm:py-9 lg:px-8">
+      <div className="pointer-events-none relative z-20 h-full px-2 py-6 sm:px-3 sm:py-8 lg:px-4">
         {!isMobile ? (
           <div
             className={cn(
@@ -710,7 +710,7 @@ export function SunnyviewExperience() {
           >
             <aside
               className={cn(
-                "relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                "pointer-events-auto relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                 focusEarth && opened ? "pointer-events-none -translate-x-8 opacity-0 blur-md" : "translate-x-0 opacity-100 blur-0"
               )}
             >
@@ -745,7 +745,7 @@ export function SunnyviewExperience() {
             {opened ? (
               <aside
                 className={cn(
-                  "min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  "pointer-events-auto min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                   focusEarth && opened ? "pointer-events-none translate-x-8 opacity-0 blur-md" : "translate-x-0 opacity-100 blur-0"
                 )}
               >
@@ -766,7 +766,7 @@ export function SunnyviewExperience() {
           <div className="relative h-full pt-14">
             <div
               className={cn(
-                "h-full overflow-auto pr-1 transition-opacity duration-500 motion-reduce:duration-0",
+                "pointer-events-auto h-full overflow-auto pr-1 transition-opacity duration-500 motion-reduce:duration-0",
                 opened ? "pointer-events-none opacity-0" : "opacity-100"
               )}
             >
@@ -776,7 +776,7 @@ export function SunnyviewExperience() {
             {opened ? (
               <div
                 className={cn(
-                  "absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity,filter] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  "pointer-events-auto absolute inset-x-0 bottom-0 z-20 transition-[transform,opacity,filter] duration-500 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                   focusEarth ? "pointer-events-none translate-y-[74%] opacity-40 blur-sm" : "translate-y-0 opacity-100 blur-0"
                 )}
               >
