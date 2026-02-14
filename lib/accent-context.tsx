@@ -15,12 +15,21 @@ const ACCENT_STORAGE_KEY = "sunnyview-accent-v1"
 const DEFAULT_HUE = 200
 const DEFAULT_SATURATION = 0.18
 
-const ACCENT_EASE_TIME_MS = 210
-const CSS_FRAME_MIN_MS = 46
-const STATE_FRAME_MIN_MS = 74
+const ACCENT_EASE_TIME_MS = 240
+const ACCENT_EASE_TIME_DRAG_MS = 320
+const CSS_FRAME_MIN_MS = 56
+const CSS_FRAME_MIN_DRAG_MS = 96
+const CSS_FORCE_WRITE_MS = 220
+const STATE_FRAME_MIN_MS = 96
+const STATE_FRAME_MIN_DRAG_MS = 280
+const STATE_FORCE_WRITE_MS = 360
 const HUE_SETTLE_EPSILON = 0.24
 const SAT_SETTLE_EPSILON = 0.0012
 const ACCENT_VALUE_EPSILON = 0.0001
+const CSS_HUE_STEP_MIN = 1.4
+const CSS_SAT_STEP_MIN = 0.006
+const STATE_HUE_STEP_MIN = 3.6
+const STATE_SAT_STEP_MIN = 0.014
 
 export const ACCENT_SAT_MIN = 0.06
 export const ACCENT_SAT_MAX = 0.28
@@ -93,6 +102,14 @@ export function AccentProvider({ children }: { children: ReactNode }) {
   const lastTickRef = useRef<number | null>(null)
   const lastCssWriteRef = useRef(0)
   const lastStateCommitRef = useRef(0)
+  const lastCssAccentRef = useRef<StoredAccent>({
+    hue: DEFAULT_HUE,
+    saturation: DEFAULT_SATURATION,
+  })
+  const lastStateAccentRef = useRef<StoredAccent>({
+    hue: DEFAULT_HUE,
+    saturation: DEFAULT_SATURATION,
+  })
   const persistTimeoutRef = useRef<number | null>(null)
 
   const writeDocumentAccent = useCallback((nextAccent: StoredAccent) => {
@@ -122,10 +139,17 @@ export function AccentProvider({ children }: { children: ReactNode }) {
       const dt = Math.max(8, Math.min(80, now - lastNow))
       lastTickRef.current = now
 
+      const accentDragging = document.documentElement.dataset.accentDragging === "true"
+      const easeTimeMs = accentDragging ? ACCENT_EASE_TIME_DRAG_MS : ACCENT_EASE_TIME_MS
+      const cssFrameMin = accentDragging ? CSS_FRAME_MIN_DRAG_MS : CSS_FRAME_MIN_MS
+      const stateFrameMin = accentDragging
+        ? STATE_FRAME_MIN_DRAG_MS
+        : STATE_FRAME_MIN_MS
+
       const currentAccent = displayAccentRef.current
       const targetAccent = targetAccentRef.current
 
-      const alpha = 1 - Math.exp(-dt / ACCENT_EASE_TIME_MS)
+      const alpha = 1 - Math.exp(-dt / easeTimeMs)
 
       const hueDelta = shortestHueDelta(currentAccent.hue, targetAccent.hue)
       const nextHue = normalizeHue(currentAccent.hue + hueDelta * alpha)
@@ -148,18 +172,50 @@ export function AccentProvider({ children }: { children: ReactNode }) {
 
       const accentForWrite = settled ? targetAccent : nextAccent
 
-      if (settled || now - lastCssWriteRef.current >= CSS_FRAME_MIN_MS) {
+      const cssElapsed = now - lastCssWriteRef.current
+      const cssHueDelta = Math.abs(
+        shortestHueDelta(lastCssAccentRef.current.hue, accentForWrite.hue)
+      )
+      const cssSatDelta = Math.abs(
+        lastCssAccentRef.current.saturation - accentForWrite.saturation
+      )
+      const shouldWriteCss =
+        settled ||
+        (cssElapsed >= cssFrameMin &&
+          (cssHueDelta >= CSS_HUE_STEP_MIN ||
+            cssSatDelta >= CSS_SAT_STEP_MIN ||
+            cssElapsed >= CSS_FORCE_WRITE_MS))
+
+      if (shouldWriteCss) {
         writeDocumentAccent(accentForWrite)
         lastCssWriteRef.current = now
+        lastCssAccentRef.current = accentForWrite
       }
 
-      if (settled || now - lastStateCommitRef.current >= STATE_FRAME_MIN_MS) {
+      const stateElapsed = now - lastStateCommitRef.current
+      const stateHueDelta = Math.abs(
+        shortestHueDelta(lastStateAccentRef.current.hue, accentForWrite.hue)
+      )
+      const stateSatDelta = Math.abs(
+        lastStateAccentRef.current.saturation - accentForWrite.saturation
+      )
+      const shouldCommitState =
+        settled ||
+        (stateElapsed >= stateFrameMin &&
+          (stateHueDelta >= STATE_HUE_STEP_MIN ||
+            stateSatDelta >= STATE_SAT_STEP_MIN ||
+            stateElapsed >= STATE_FORCE_WRITE_MS))
+
+      if (shouldCommitState) {
         commitAccentState(accentForWrite)
         lastStateCommitRef.current = now
+        lastStateAccentRef.current = accentForWrite
       }
 
       if (settled) {
         displayAccentRef.current = targetAccent
+        lastCssAccentRef.current = targetAccent
+        lastStateAccentRef.current = targetAccent
         frameRef.current = null
         lastTickRef.current = null
         return
@@ -208,6 +264,8 @@ export function AccentProvider({ children }: { children: ReactNode }) {
 
     targetAccentRef.current = initialAccent
     displayAccentRef.current = initialAccent
+    lastCssAccentRef.current = initialAccent
+    lastStateAccentRef.current = initialAccent
     writeDocumentAccent(initialAccent)
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
