@@ -14,7 +14,6 @@ interface AccentColorControlProps {
 
 const HUE_PICKER_SATURATION = 100
 const HUE_PICKER_LIGHTNESS = 50
-const DRAG_VISUAL_MIN_FRAME_MS = 32
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
@@ -25,76 +24,24 @@ function normalizeHue(hue: number): number {
   return normalized < 0 ? normalized + 360 : normalized
 }
 
+function hueDistance(a: number, b: number): number {
+  return Math.abs(((normalizeHue(b) - normalizeHue(a) + 540) % 360) - 180)
+}
+
 export function AccentColorControl({ className, compact = false, showSwatch = true, onAccentChange }: AccentColorControlProps) {
   const { hue, saturation, setHue, setSaturation } = useAccent()
   const [dragDraft, setDragDraft] = useState<{ hue: number, saturation: number } | null>(null)
-  const draftAccentRef = useRef({ hue, saturation })
   const draggingRef = useRef(false)
-  const visualRafRef = useRef<number | null>(null)
-  const lastVisualWriteRef = useRef(0)
 
   const displayHue = dragDraft?.hue ?? hue
   const displaySaturation = dragDraft?.saturation ?? saturation
-
-  useEffect(() => {
-    if (draggingRef.current) return
-    draftAccentRef.current = { hue, saturation }
-  }, [hue, saturation])
-
-  const writeDocumentAccent = useCallback((nextHue: number, nextSaturation: number) => {
-    const root = document.documentElement
-    root.style.setProperty("--accent-hue", String(nextHue))
-    root.style.setProperty("--accent-sat", String(nextSaturation))
-  }, [])
-
-  const commitAccent = useCallback((nextHue: number, nextSaturation: number) => {
-    if (nextHue !== hue) {
-      setHue(nextHue)
-    }
-    if (nextSaturation !== saturation) {
-      setSaturation(nextSaturation)
-    }
-  }, [hue, saturation, setHue, setSaturation])
-
-  const flushVisualAccentWrite = useCallback(() => {
-    if (visualRafRef.current !== null) {
-      window.cancelAnimationFrame(visualRafRef.current)
-      visualRafRef.current = null
-    }
-    const next = draftAccentRef.current
-    writeDocumentAccent(next.hue, next.saturation)
-    lastVisualWriteRef.current = performance.now()
-  }, [writeDocumentAccent])
-
-  const scheduleVisualAccentWrite = useCallback(() => {
-    if (visualRafRef.current !== null) return
-
-    const tick = (now: number) => {
-      const elapsed = now - lastVisualWriteRef.current
-      if (elapsed < DRAG_VISUAL_MIN_FRAME_MS) {
-        visualRafRef.current = window.requestAnimationFrame(tick)
-        return
-      }
-
-      visualRafRef.current = null
-      lastVisualWriteRef.current = now
-      const next = draftAccentRef.current
-      writeDocumentAccent(next.hue, next.saturation)
-    }
-
-    visualRafRef.current = window.requestAnimationFrame(tick)
-  }, [writeDocumentAccent])
 
   const stopAccentDrag = useCallback(() => {
     if (!draggingRef.current) return
 
     draggingRef.current = false
     delete document.documentElement.dataset.accentDragging
-    flushVisualAccentWrite()
-    const next = draftAccentRef.current
-    commitAccent(next.hue, next.saturation)
-    setDragDraft(null)
-  }, [commitAccent, flushVisualAccentWrite])
+  }, [])
 
   const startAccentDrag = useCallback(() => {
     if (draggingRef.current) return
@@ -103,7 +50,6 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
       hue,
       saturation,
     }
-    draftAccentRef.current = nextDraft
     setDragDraft(nextDraft)
 
     draggingRef.current = true
@@ -114,11 +60,6 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
     const nextHue = normalizeHue(nextHueRaw)
     const nextSaturation = clamp(nextSaturationRaw, ACCENT_SAT_MIN, ACCENT_SAT_MAX)
 
-    draftAccentRef.current = {
-      hue: nextHue,
-      saturation: nextSaturation,
-    }
-
     onAccentChange?.()
 
     if (draggingRef.current) {
@@ -128,13 +69,32 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
         }
         return { hue: nextHue, saturation: nextSaturation }
       })
-      scheduleVisualAccentWrite()
-      return
     }
 
-    writeDocumentAccent(nextHue, nextSaturation)
-    commitAccent(nextHue, nextSaturation)
-  }, [commitAccent, onAccentChange, scheduleVisualAccentWrite, writeDocumentAccent])
+    if (nextHue !== hue) {
+      setHue(nextHue)
+    }
+    if (nextSaturation !== saturation) {
+      setSaturation(nextSaturation)
+    }
+  }, [hue, onAccentChange, saturation, setHue, setSaturation])
+
+  useEffect(() => {
+    if (draggingRef.current) return
+    if (!dragDraft) return
+
+    const hueDelta = hueDistance(hue, dragDraft.hue)
+    const saturationDelta = Math.abs(saturation - dragDraft.saturation)
+    if (hueDelta <= 0.35 && saturationDelta <= 0.0025) {
+      const clearDraftFrame = window.requestAnimationFrame(() => {
+        setDragDraft(null)
+      })
+
+      return () => {
+        window.cancelAnimationFrame(clearDraftFrame)
+      }
+    }
+  }, [dragDraft, hue, saturation])
 
   useEffect(() => {
     const handlePointerEnd = () => {
@@ -150,10 +110,6 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
       window.removeEventListener("pointercancel", handlePointerEnd)
       window.removeEventListener("blur", handlePointerEnd)
       stopAccentDrag()
-      if (visualRafRef.current !== null) {
-        window.cancelAnimationFrame(visualRafRef.current)
-        visualRafRef.current = null
-      }
       delete document.documentElement.dataset.accentDragging
     }
   }, [stopAccentDrag])
@@ -164,7 +120,7 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
   )
 
   function handleHueChange(nextColor: HslColor) {
-    applyDraftAccent(nextColor.h, draftAccentRef.current.saturation)
+    applyDraftAccent(nextColor.h, displaySaturation)
   }
 
   return (
@@ -196,7 +152,7 @@ export function AccentColorControl({ className, compact = false, showSwatch = tr
           value={displaySaturation}
           onPointerDown={startAccentDrag}
           onChange={(event) => {
-            applyDraftAccent(draftAccentRef.current.hue, Number(event.target.value))
+            applyDraftAccent(displayHue, Number(event.target.value))
           }}
           className="hue-slider h-3 w-full cursor-pointer appearance-none rounded-full outline-none"
           style={{

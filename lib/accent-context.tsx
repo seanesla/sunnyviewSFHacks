@@ -5,7 +5,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -15,6 +14,13 @@ const ACCENT_STORAGE_KEY = "sunnyview-accent-v1"
 
 const DEFAULT_HUE = 200
 const DEFAULT_SATURATION = 0.18
+
+const ACCENT_EASE_TIME_MS = 210
+const CSS_FRAME_MIN_MS = 46
+const STATE_FRAME_MIN_MS = 74
+const HUE_SETTLE_EPSILON = 0.24
+const SAT_SETTLE_EPSILON = 0.0012
+const ACCENT_VALUE_EPSILON = 0.0001
 
 export const ACCENT_SAT_MIN = 0.06
 export const ACCENT_SAT_MAX = 0.28
@@ -26,6 +32,10 @@ function clamp(n: number, min: number, max: number): number {
 function normalizeHue(hue: number): number {
   const normalized = hue % 360
   return normalized < 0 ? normalized + 360 : normalized
+}
+
+function shortestHueDelta(fromHue: number, toHue: number): number {
+  return ((normalizeHue(toHue) - normalizeHue(fromHue) + 540) % 360) - 180
 }
 
 type StoredAccent = {
@@ -66,47 +76,147 @@ const AccentContext = createContext<AccentContextType>({
 })
 
 export function AccentProvider({ children }: { children: ReactNode }) {
-  const [hue, setHueState] = useState(DEFAULT_HUE)
-  const [saturation, setSaturationState] = useState(DEFAULT_SATURATION)
+  const [accent, setAccentState] = useState<StoredAccent>({
+    hue: DEFAULT_HUE,
+    saturation: DEFAULT_SATURATION,
+  })
   const [hydrated, setHydrated] = useState(false)
-  const pendingAccentRef = useRef<StoredAccent>({
+  const targetAccentRef = useRef<StoredAccent>({
+    hue: DEFAULT_HUE,
+    saturation: DEFAULT_SATURATION,
+  })
+  const displayAccentRef = useRef<StoredAccent>({
     hue: DEFAULT_HUE,
     saturation: DEFAULT_SATURATION,
   })
   const frameRef = useRef<number | null>(null)
+  const lastTickRef = useRef<number | null>(null)
+  const lastCssWriteRef = useRef(0)
+  const lastStateCommitRef = useRef(0)
   const persistTimeoutRef = useRef<number | null>(null)
 
-  const applyPendingAccent = useCallback(() => {
-    const pending = pendingAccentRef.current
-    setHueState((prev) => (prev === pending.hue ? prev : pending.hue))
-    setSaturationState((prev) =>
-      prev === pending.saturation ? prev : pending.saturation
-    )
+  const writeDocumentAccent = useCallback((nextAccent: StoredAccent) => {
+    document.documentElement.style.setProperty("--accent-hue", String(nextAccent.hue))
+    document.documentElement.style.setProperty("--accent-sat", String(nextAccent.saturation))
   }, [])
 
-  const scheduleApplyPendingAccent = useCallback(() => {
-    if (frameRef.current !== null) return
-    frameRef.current = window.requestAnimationFrame(() => {
-      frameRef.current = null
-      applyPendingAccent()
+  const commitAccentState = useCallback((nextAccent: StoredAccent) => {
+    setAccentState((prevAccent) => {
+      const hueDelta = Math.abs(shortestHueDelta(prevAccent.hue, nextAccent.hue))
+      const saturationDelta = Math.abs(prevAccent.saturation - nextAccent.saturation)
+      if (
+        hueDelta <= ACCENT_VALUE_EPSILON &&
+        saturationDelta <= ACCENT_VALUE_EPSILON
+      ) {
+        return prevAccent
+      }
+      return nextAccent
     })
-  }, [applyPendingAccent])
+  }, [])
+
+  const startAccentAnimation = useCallback(() => {
+    if (frameRef.current !== null) return
+
+    const tick = (now: number) => {
+      const lastNow = lastTickRef.current ?? now
+      const dt = Math.max(8, Math.min(80, now - lastNow))
+      lastTickRef.current = now
+
+      const currentAccent = displayAccentRef.current
+      const targetAccent = targetAccentRef.current
+
+      const alpha = 1 - Math.exp(-dt / ACCENT_EASE_TIME_MS)
+
+      const hueDelta = shortestHueDelta(currentAccent.hue, targetAccent.hue)
+      const nextHue = normalizeHue(currentAccent.hue + hueDelta * alpha)
+      const nextSaturation =
+        currentAccent.saturation +
+        (targetAccent.saturation - currentAccent.saturation) * alpha
+
+      const nextAccent: StoredAccent = {
+        hue: nextHue,
+        saturation: nextSaturation,
+      }
+
+      displayAccentRef.current = nextAccent
+
+      const hueRemaining = Math.abs(shortestHueDelta(nextAccent.hue, targetAccent.hue))
+      const saturationRemaining = Math.abs(nextAccent.saturation - targetAccent.saturation)
+      const settled =
+        hueRemaining <= HUE_SETTLE_EPSILON &&
+        saturationRemaining <= SAT_SETTLE_EPSILON
+
+      const accentForWrite = settled ? targetAccent : nextAccent
+
+      if (settled || now - lastCssWriteRef.current >= CSS_FRAME_MIN_MS) {
+        writeDocumentAccent(accentForWrite)
+        lastCssWriteRef.current = now
+      }
+
+      if (settled || now - lastStateCommitRef.current >= STATE_FRAME_MIN_MS) {
+        commitAccentState(accentForWrite)
+        lastStateCommitRef.current = now
+      }
+
+      if (settled) {
+        displayAccentRef.current = targetAccent
+        frameRef.current = null
+        lastTickRef.current = null
+        return
+      }
+
+      frameRef.current = window.requestAnimationFrame(tick)
+    }
+
+    frameRef.current = window.requestAnimationFrame(tick)
+  }, [commitAccentState, writeDocumentAccent])
+
+  const updateTargetAccent = useCallback(
+    (nextAccent: StoredAccent) => {
+      const normalizedAccent: StoredAccent = {
+        hue: normalizeHue(nextAccent.hue),
+        saturation: clamp(nextAccent.saturation, ACCENT_SAT_MIN, ACCENT_SAT_MAX),
+      }
+
+      const previousTarget = targetAccentRef.current
+      const hueDelta = Math.abs(
+        shortestHueDelta(previousTarget.hue, normalizedAccent.hue)
+      )
+      const saturationDelta = Math.abs(
+        previousTarget.saturation - normalizedAccent.saturation
+      )
+
+      if (
+        hueDelta <= ACCENT_VALUE_EPSILON &&
+        saturationDelta <= ACCENT_VALUE_EPSILON
+      ) {
+        return
+      }
+
+      targetAccentRef.current = normalizedAccent
+      startAccentAnimation()
+    },
+    [startAccentAnimation]
+  )
 
   useEffect(() => {
     const storedAccent = readStoredAccent()
-    if (storedAccent) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setHueState(storedAccent.hue)
-      setSaturationState(storedAccent.saturation)
-      pendingAccentRef.current = storedAccent
+    const initialAccent = storedAccent ?? {
+      hue: DEFAULT_HUE,
+      saturation: DEFAULT_SATURATION,
     }
-    setHydrated(true)
-  }, [])
 
-  useLayoutEffect(() => {
-    document.documentElement.style.setProperty("--accent-hue", String(hue))
-    document.documentElement.style.setProperty("--accent-sat", String(saturation))
-  }, [hue, saturation])
+    targetAccentRef.current = initialAccent
+    displayAccentRef.current = initialAccent
+    writeDocumentAccent(initialAccent)
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAccentState(initialAccent)
+    setHydrated(true)
+  }, [writeDocumentAccent])
+
+  const hue = accent.hue
+  const saturation = accent.saturation
 
   useEffect(() => {
     if (!hydrated) return
@@ -116,7 +226,10 @@ export function AccentProvider({ children }: { children: ReactNode }) {
       persistTimeoutRef.current = null
     }
 
-    const stored: StoredAccent = { hue, saturation }
+    const stored: StoredAccent = {
+      hue,
+      saturation,
+    }
     persistTimeoutRef.current = window.setTimeout(() => {
       persistTimeoutRef.current = null
       window.localStorage.setItem(ACCENT_STORAGE_KEY, JSON.stringify(stored))
@@ -143,29 +256,32 @@ export function AccentProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  function handleSetHue(nextHue: number) {
-    pendingAccentRef.current = {
-      ...pendingAccentRef.current,
-      hue: normalizeHue(nextHue),
-    }
-    scheduleApplyPendingAccent()
-  }
+  const handleSetHue = useCallback(
+    (nextHue: number) => {
+      updateTargetAccent({
+        hue: nextHue,
+        saturation: targetAccentRef.current.saturation,
+      })
+    },
+    [updateTargetAccent]
+  )
 
-  function handleSetSaturation(nextSaturation: number) {
-    pendingAccentRef.current = {
-      ...pendingAccentRef.current,
-      saturation: clamp(nextSaturation, ACCENT_SAT_MIN, ACCENT_SAT_MAX),
-    }
-    scheduleApplyPendingAccent()
-  }
+  const handleSetSaturation = useCallback(
+    (nextSaturation: number) => {
+      updateTargetAccent({
+        hue: targetAccentRef.current.hue,
+        saturation: nextSaturation,
+      })
+    },
+    [updateTargetAccent]
+  )
 
-  function resetAccent() {
-    pendingAccentRef.current = {
+  const resetAccent = useCallback(() => {
+    updateTargetAccent({
       hue: DEFAULT_HUE,
       saturation: DEFAULT_SATURATION,
-    }
-    scheduleApplyPendingAccent()
-  }
+    })
+  }, [updateTargetAccent])
 
   return (
     <AccentContext.Provider
