@@ -2,35 +2,27 @@ import { NextResponse } from "next/server"
 
 export const runtime = "nodejs"
 
+function looksLikeGeminiKey(value: string) {
+  const raw = value.trim()
+  if (raw.length === 0) return false
+  return /^[A-Za-z0-9._-]{20,}$/.test(raw)
+}
+
 export async function POST(req: Request) {
-  const headerKey = req.headers.get("x-gemini-api-key")?.trim() || ""
+  // Format-only validation (instant). No network calls.
+  const headerKey = req.headers.get("x-gemini-api-key") ?? ""
   const body = await req.json().catch(() => ({}))
   const bodyKeyRaw = (body as any)?.geminiApiKey ?? (body as any)?.apiKey
-  const bodyKey = typeof bodyKeyRaw === "string" ? bodyKeyRaw.trim() : ""
-  const key = headerKey || bodyKey || ""
+  const bodyKey = typeof bodyKeyRaw === "string" ? bodyKeyRaw : ""
+  const key = headerKey || bodyKey
 
-  if (!key) {
-    return NextResponse.json({ ok: false, error: "Missing API key" }, { status: 400 })
+  if (!key.trim()) {
+    return NextResponse.json({ ok: false, error: "Missing API key" }, { status: 200 })
   }
 
-  // Lightweight validation: hit the public models list endpoint.
-  const url = new URL("https://generativelanguage.googleapis.com/v1beta/models")
-  url.searchParams.set("key", key)
-
-  try {
-    const res = await fetch(url.toString(), { method: "GET" })
-    if (res.ok) {
-      return NextResponse.json({ ok: true }, { status: 200 })
-    }
-
-    const json = (await res.json().catch(() => null)) as any
-    const msg =
-      typeof json?.error?.message === "string"
-        ? json.error.message
-        : `Validation failed (${res.status})`
-    return NextResponse.json({ ok: false, error: msg }, { status: 200 })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Network error"
-    return NextResponse.json({ ok: false, error: msg }, { status: 200 })
+  if (!looksLikeGeminiKey(key)) {
+    return NextResponse.json({ ok: false, error: "Key format looks off" }, { status: 200 })
   }
+
+  return NextResponse.json({ ok: true }, { status: 200 })
 }

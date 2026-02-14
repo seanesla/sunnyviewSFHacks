@@ -19,6 +19,13 @@ type ForecastDay = {
   estKwh: number
 }
 
+type WorthItAssumptions = {
+  utilityRateUsdPerKwh: number
+  installCostUsdPerW: number
+  goodPaybackYears: number
+  maybePaybackYears: number
+}
+
 type CacheEntry = { t: number; payload: unknown }
 const MEM_TTL_MS = 20 * 60 * 1000
 
@@ -36,21 +43,95 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function isoDateUTC(d: Date) {
+  return d.toISOString().slice(0, 10)
+}
+
+function subDays(d: Date, days: number) {
+  const out = new Date(d)
+  out.setUTCDate(out.getUTCDate() - days)
+  return out
+}
+
+type Archive365Summary = {
+  source: "open-meteo-archive"
+  startDate: string
+  endDate: string
+  days: number
+  sumIrradianceKwhM2: number | null
+  avgCloudCoverPct: number | null
+}
+
+async function fetchArchive365Summary(opts: { lat: number; lng: number; signal: AbortSignal }): Promise<Archive365Summary> {
+  const end = subDays(new Date(), 1)
+  const start = subDays(end, 364)
+  const startDate = isoDateUTC(start)
+  const endDate = isoDateUTC(end)
+
+  const url = new URL("https://archive-api.open-meteo.com/v1/archive")
+  url.searchParams.set("latitude", String(opts.lat))
+  url.searchParams.set("longitude", String(opts.lng))
+  url.searchParams.set("timezone", "auto")
+  url.searchParams.set("start_date", startDate)
+  url.searchParams.set("end_date", endDate)
+  url.searchParams.set("daily", "shortwave_radiation_sum,cloudcover_mean")
+
+  const res = await fetch(url.toString(), {
+    signal: opts.signal,
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  })
+  if (!res.ok) throw new Error(`Archive failed (${res.status})`)
+  const json = (await res.json().catch(() => null)) as any
+
+  const sw: Array<number | null> = Array.isArray(json?.daily?.shortwave_radiation_sum)
+    ? json.daily.shortwave_radiation_sum.map((v: any) => (Number.isFinite(Number(v)) ? Number(v) : null))
+    : []
+  const cc: Array<number | null> = Array.isArray(json?.daily?.cloudcover_mean)
+    ? json.daily.cloudcover_mean.map((v: any) => (Number.isFinite(Number(v)) ? Number(v) : null))
+    : []
+
+  const irrKwhM2 = sw.map((mj) => (mj === null ? null : mj * 0.2777777778)).filter((v): v is number => v !== null)
+  const clouds = cc.filter((v): v is number => v !== null)
+
+  const sumIrr = irrKwhM2.length ? irrKwhM2.reduce((a, b) => a + b, 0) : null
+  const avgCloud = clouds.length ? clouds.reduce((a, b) => a + b, 0) / clouds.length : null
+
+  return {
+    source: "open-meteo-archive",
+    startDate,
+    endDate,
+    days: Math.max(sw.length, cc.length, irrKwhM2.length, clouds.length),
+    sumIrradianceKwhM2: sumIrr !== null ? Number(sumIrr.toFixed(2)) : null,
+    avgCloudCoverPct: avgCloud !== null ? Math.round(clamp(avgCloud, 0, 100)) : null,
+  }
+}
+
 function computeWorthIt(days: ForecastDay[], dcKw: number, lossesPct: number) {
   const sum7 = days.reduce((s, d) => s + (Number.isFinite(d.estKwh) ? d.estKwh : 0), 0)
   const avgDaily = sum7 / Math.max(1, days.length)
   const annualFromForecast = avgDaily * 365
 
-  const rate = 0.25
-  const costPerW = 2.75
-  const installCost = dcKw * 1000 * costPerW
-  const annualSavings = annualFromForecast * rate
+  const assumptions: WorthItAssumptions = {
+    utilityRateUsdPerKwh: 0.25,
+    installCostUsdPerW: 2.75,
+    goodPaybackYears: 9,
+    maybePaybackYears: 14,
+  }
+
+  const installCost = dcKw * 1000 * assumptions.installCostUsdPerW
+  const annualSavings = annualFromForecast * assumptions.utilityRateUsdPerKwh
   const paybackYears = annualSavings > 0 ? installCost / annualSavings : Infinity
 
-  const verdict = paybackYears < 9 ? "good" : paybackYears < 14 ? "maybe" : "unlikely"
+  const verdict =
+    paybackYears < assumptions.goodPaybackYears
+      ? "good"
+      : paybackYears < assumptions.maybePaybackYears
+        ? "maybe"
+        : "unlikely"
   const reasons = [
     `Forecast average: ${avgDaily.toFixed(1)} kWh/day for your current layout.`,
-    `Assumes losses ${lossesPct}% and utility rate $${rate.toFixed(2)}/kWh.`,
+    `Assumes losses ${lossesPct}% and utility rate $${assumptions.utilityRateUsdPerKwh.toFixed(2)}/kWh.`,
     verdict === "good"
       ? `Estimated simple payback ~${paybackYears.toFixed(1)} years (typical install cost assumption).`
       : verdict === "maybe"
@@ -65,6 +146,88 @@ function computeWorthIt(days: ForecastDay[], dcKw: number, lossesPct: number) {
     annualSavingsUsd: annualSavings,
     installCostUsd: installCost,
     reasons,
+    assumptions,
+    basis: {
+      kind: "forecast-7d" as const,
+      source: "open-meteo",
+      days: days.length,
+    },
+  }
+}
+
+function computeWorthItAnnual(opts: {
+  annualKwh: number
+  avgDailyKwh: number
+  dcKw: number
+  lossesPct: number
+  basis:
+    | { kind: "archive-365d"; source: "open-meteo-archive"; startDate: string; endDate: string; days: number }
+    | { kind: "fallback"; source: "fallback"; days: number }
+    | { kind: "unavailable"; source: "unavailable"; reason: string }
+}) {
+  if (opts.basis.kind === "unavailable") {
+    return {
+      verdict: undefined,
+      paybackYears: null,
+      annualKwhEst: null,
+      annualSavingsUsd: null,
+      installCostUsd: null,
+      reasons: [
+        `Annual baseline unavailable (${opts.basis.reason}). We can't estimate payback without a 365-day weather baseline.`,
+      ],
+      assumptions: {
+        utilityRateUsdPerKwh: 0.25,
+        installCostUsdPerW: 2.75,
+        goodPaybackYears: 9,
+        maybePaybackYears: 14,
+      },
+      basis: opts.basis,
+    }
+  }
+
+  const assumptions: WorthItAssumptions = {
+    utilityRateUsdPerKwh: 0.25,
+    installCostUsdPerW: 2.75,
+    goodPaybackYears: 9,
+    maybePaybackYears: 14,
+  }
+
+  const annualKwh = Number.isFinite(opts.annualKwh) ? opts.annualKwh : 0
+  const installCostUsd = opts.dcKw * 1000 * assumptions.installCostUsdPerW
+  const annualSavingsUsd = annualKwh * assumptions.utilityRateUsdPerKwh
+  const paybackYears = annualSavingsUsd > 0 ? installCostUsd / annualSavingsUsd : Infinity
+
+  const verdict =
+    paybackYears < assumptions.goodPaybackYears
+      ? "good"
+      : paybackYears < assumptions.maybePaybackYears
+        ? "maybe"
+        : "unlikely"
+
+  const basisText =
+    opts.basis.kind === "archive-365d"
+      ? `Annualized from Open-Meteo archive (${opts.basis.startDate} to ${opts.basis.endDate}).`
+      : "Annualized from a fallback profile (rough)."
+
+  const reasons = [
+    `${basisText} Estimated ~${opts.annualKwh.toFixed(0)} kWh/year (~${opts.avgDailyKwh.toFixed(1)} kWh/day) for your current layout.`,
+    `Assumes losses ${opts.lossesPct}% and utility rate $${assumptions.utilityRateUsdPerKwh.toFixed(2)}/kWh.`,
+    verdict === "good"
+      ? `Estimated simple payback ~${paybackYears.toFixed(1)} years (typical install cost assumption).`
+      : verdict === "maybe"
+        ? `Estimated simple payback ~${paybackYears.toFixed(1)} years; economics depend on incentives and your rate plan.`
+        : "Estimated payback is long; incentives, shading, or higher rates could change this.",
+  ]
+
+  return {
+    verdict,
+    paybackYears: Number.isFinite(paybackYears) ? paybackYears : null,
+    annualKwhEst: annualKwh,
+    annualSavingsUsd,
+    installCostUsd,
+    reasons,
+    assumptions,
+    basis: opts.basis,
   }
 }
 
@@ -113,14 +276,41 @@ export async function GET(req: NextRequest) {
   const mem = memCache()
   const hit = mem.get(key)
   if (hit && now - hit.t < MEM_TTL_MS) {
-    const cached = hit.payload as { days: ForecastDay[]; meta: Record<string, unknown>; worthIt: Record<string, unknown> }
+    const cached = hit.payload as {
+      days: Array<Omit<ForecastDay, "estKwh">>
+      meta: Record<string, unknown>
+      archive365?: Archive365Summary | null
+    }
     const days = cached.days.map((d) => {
       const irr = d.irradianceKwhM2
       const estKwh = irr ? dcKw * irr * pr : 0
       return { ...d, estKwh }
     })
+    const archive = cached.archive365 ?? null
+    const worthIt =
+      archive?.sumIrradianceKwhM2 && archive.sumIrradianceKwhM2 > 0
+        ? computeWorthItAnnual({
+            annualKwh: dcKw * pr * archive.sumIrradianceKwhM2,
+            avgDailyKwh: (dcKw * pr * archive.sumIrradianceKwhM2) / 365,
+            dcKw,
+            lossesPct,
+            basis: {
+              kind: "archive-365d",
+              source: "open-meteo-archive",
+              startDate: archive.startDate,
+              endDate: archive.endDate,
+              days: archive.days,
+            },
+          })
+        : computeWorthItAnnual({
+            annualKwh: 0,
+            avgDailyKwh: 0,
+            dcKw,
+            lossesPct,
+            basis: { kind: "unavailable", source: "unavailable", reason: "archive unavailable" },
+          })
     console.info(`${LOG_PREFIX} cache hit`, { key, days: days.length })
-    return NextResponse.json({ ...cached, days }, { status: 200 })
+    return NextResponse.json({ ...cached, days, worthIt }, { status: 200 })
   }
 
   const url = new URL("https://api.open-meteo.com/v1/forecast")
@@ -129,6 +319,28 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("timezone", "auto")
   url.searchParams.set("forecast_days", "7")
   url.searchParams.set("daily", "shortwave_radiation_sum,cloudcover_mean")
+
+  // Try to prefetch a 365-day archive summary for economics.
+  let archive365: Archive365Summary | null = null
+  {
+    const ac = new AbortController()
+    const t = setTimeout(() => ac.abort(), 6500)
+    try {
+      archive365 = await fetchArchive365Summary({ lat, lng, signal: ac.signal })
+      console.info(`${LOG_PREFIX} archive summary`, {
+        startDate: archive365.startDate,
+        endDate: archive365.endDate,
+        days: archive365.days,
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Archive failed"
+      console.warn(`${LOG_PREFIX} archive failed`, { message: msg })
+      archive365 = null
+    } finally {
+      clearTimeout(t)
+      ac.abort()
+    }
+  }
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const ac = new AbortController()
@@ -185,29 +397,48 @@ export async function GET(req: NextRequest) {
       }
 
       const worthIt = computeWorthIt(days, dcKw, lossesPct)
-      const payload = {
-        days: days.map((d) => ({ ...d, estKwh: 0 })),
-        meta: {
-          source: "open-meteo",
-          units: { shortwave_radiation_sum: "MJ/m^2", irradianceKwhM2: "kWh/m^2" },
-          pr,
-        },
-        worthIt,
-      }
+      const annualWorthIt =
+        archive365?.sumIrradianceKwhM2 && archive365.sumIrradianceKwhM2 > 0
+          ? computeWorthItAnnual({
+              annualKwh: dcKw * pr * archive365.sumIrradianceKwhM2,
+              avgDailyKwh: (dcKw * pr * archive365.sumIrradianceKwhM2) / 365,
+              dcKw,
+              lossesPct,
+              basis: {
+                kind: "archive-365d",
+                source: "open-meteo-archive",
+                startDate: archive365.startDate,
+                endDate: archive365.endDate,
+                days: archive365.days,
+              },
+            })
+          : computeWorthItAnnual({
+              annualKwh: 0,
+              avgDailyKwh: 0,
+              dcKw,
+              lossesPct,
+              basis: { kind: "unavailable", source: "unavailable", reason: "archive unavailable" },
+            })
 
-      mem.set(key, { t: now, payload })
-      const outDays = (payload.days as ForecastDay[]).map((d) => {
-        const irr = d.irradianceKwhM2
-        const estKwh = irr ? dcKw * irr * pr : 0
-        return { ...d, estKwh }
-      })
+       const payload = {
+         days: days.map((d) => ({ date: d.date, irradianceKwhM2: d.irradianceKwhM2, cloudCoverPct: d.cloudCoverPct })),
+         meta: {
+           source: "open-meteo",
+           units: { shortwave_radiation_sum: "MJ/m^2", irradianceKwhM2: "kWh/m^2" },
+           pr,
+         },
+         archive365,
+       }
+
+       mem.set(key, { t: now, payload })
+       const outDays = days
 
       console.info(`${LOG_PREFIX} success`, {
         attempt,
         durationMs,
         days: outDays.length,
       })
-      return NextResponse.json({ ...payload, days: outDays }, { status: 200 })
+       return NextResponse.json({ ...payload, days: outDays, worthIt: annualWorthIt }, { status: 200 })
     } catch (e) {
       const durationMs = Date.now() - startedAt
       const message = e instanceof Error ? e.message : "Forecast failed"
@@ -228,7 +459,28 @@ export async function GET(req: NextRequest) {
   }
 
   const fallbackDays = buildFallbackDays({ dcKw, pr })
-  const worthIt = computeWorthIt(fallbackDays, dcKw, lossesPct)
+  const worthIt =
+    archive365?.sumIrradianceKwhM2 && archive365.sumIrradianceKwhM2 > 0
+      ? computeWorthItAnnual({
+          annualKwh: dcKw * pr * archive365.sumIrradianceKwhM2,
+          avgDailyKwh: (dcKw * pr * archive365.sumIrradianceKwhM2) / 365,
+          dcKw,
+          lossesPct,
+          basis: {
+            kind: "archive-365d",
+            source: "open-meteo-archive",
+            startDate: archive365.startDate,
+            endDate: archive365.endDate,
+            days: archive365.days,
+          },
+        })
+      : computeWorthItAnnual({
+          annualKwh: 0,
+          avgDailyKwh: 0,
+          dcKw,
+          lossesPct,
+          basis: { kind: "unavailable", source: "unavailable", reason: "archive unavailable" },
+        })
   const fallbackPayload = {
     days: fallbackDays,
     meta: {
@@ -237,6 +489,7 @@ export async function GET(req: NextRequest) {
       pr,
     },
     worthIt,
+    archive365,
   }
 
   console.warn(`${LOG_PREFIX} returning fallback`, {

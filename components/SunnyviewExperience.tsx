@@ -313,7 +313,20 @@ export function SunnyviewExperience() {
   const [panelSpecMode, setPanelSpecMode] = useState<"auto" | "manual">("auto");
   const [panelChoiceId, setPanelChoiceId] = useState<string>(PANEL_OPTIONS[0]?.id ?? "custom");
   const [panelBrandRec, setPanelBrandRec] = useState<
-    | { selectedId: string; brand: string; model: string; why: string[]; caveats: string[] }
+    | {
+        selectedId: string;
+        brand: string;
+        model: string;
+        sourceUrl: string;
+        why: string[];
+        caveats: string[];
+        source: {
+          kind: "gemini" | "fallback";
+          usedModel: string | null;
+          fallbackReason: string | null;
+          attemptedModels: string[];
+        };
+      }
     | null
   >(null);
   const [panelBrandBusy, setPanelBrandBusy] = useState(false);
@@ -321,6 +334,30 @@ export function SunnyviewExperience() {
   const lastPanelAutoKeyRef = useRef<string | null>(null);
   const [panelBrandReqSeq, setPanelBrandReqSeq] = useState(0);
   const panelBrandAbortRef = useRef<AbortController | null>(null);
+  const lastPanelBrandAutoAddrKeyRef = useRef<string | null>(null);
+  const panelBrandCtxRef = useRef<{
+    closed: boolean;
+    vertices: Point[];
+    mPerPx: number | null;
+    orientationDeg: number;
+    panelSpec: PanelSpec;
+    panelSpecMode: "auto" | "manual";
+    panelChoiceId: string;
+    roofAreaM2: number | null;
+    lat: number | null;
+    lng: number | null;
+  }>({
+    closed: false,
+    vertices: [],
+    mPerPx: null,
+    orientationDeg: 0,
+    panelSpec,
+    panelSpecMode: "auto",
+    panelChoiceId: "custom",
+    roofAreaM2: null,
+    lat: null,
+    lng: null,
+  });
   const [orientationDeg, setOrientationDeg] = useState<number>(0);
   const [tiltDeg, setTiltDeg] = useState<number>(20);
   const [azimuthDeg, setAzimuthDeg] = useState<number>(180);
@@ -363,6 +400,40 @@ export function SunnyviewExperience() {
     return polygonAreaPx2(vertices) * mPerPx * mPerPx;
   }, [closed, mPerPx, vertices]);
 
+  const panelBrandAddrKey = useMemo(() => {
+    if (mapInput.kind !== "address") return null;
+    if (mapInput.lat === null || mapInput.lng === null) return null;
+    return `${mapInput.lat.toFixed(5)}:${mapInput.lng.toFixed(5)}`;
+  }, [mapInput.kind, mapInput.lat, mapInput.lng]);
+
+  // Keep a stable snapshot for the Gemini effect so it only runs when explicitly triggered.
+  panelBrandCtxRef.current = {
+    closed,
+    vertices,
+    mPerPx,
+    orientationDeg,
+    panelSpec,
+    panelSpecMode,
+    panelChoiceId,
+    roofAreaM2,
+    lat,
+    lng,
+  };
+
+  // Auto-run panel recommendation once per address (after roof is traced).
+  useEffect(() => {
+    if (!panelsMounted) return;
+    if (!panelBrandAddrKey) return;
+    if (!closed || vertices.length < 3 || !mPerPx || !roofAreaM2) return;
+
+    if (lastPanelBrandAutoAddrKeyRef.current === panelBrandAddrKey) return;
+    lastPanelBrandAutoAddrKeyRef.current = panelBrandAddrKey;
+
+    setPanelBrandRec(null);
+    setPanelBrandError(null);
+    setPanelBrandReqSeq((s) => s + 1);
+  }, [closed, mPerPx, panelBrandAddrKey, panelsMounted, roofAreaM2, vertices.length]);
+
   useEffect(() => {
     if (!panelsMounted) return;
     if (panelSpecMode !== "auto") return;
@@ -397,7 +468,6 @@ export function SunnyviewExperience() {
     setOrientationDeg(best.orient);
     setPanelBrandRec(null);
     setPanelBrandError(null);
-    setPanelBrandReqSeq((s) => s + 1);
   }, [
     closed,
     mPerPx,
@@ -410,9 +480,27 @@ export function SunnyviewExperience() {
 
   useEffect(() => {
     if (!panelsMounted) return;
-    if (!closed || vertices.length < 3) return;
-    if (!roofAreaM2 || roofAreaM2 <= 0) return;
-    if (lat === null || lng === null) return;
+    if (panelBrandReqSeq === 0) return;
+
+    const ctx = panelBrandCtxRef.current;
+    if (!ctx.closed || ctx.vertices.length < 3 || !ctx.mPerPx || !ctx.roofAreaM2) {
+      setPanelBrandError("Trace and calibrate a roof area first.");
+      return;
+    }
+    if (ctx.lat === null || ctx.lng === null) {
+      setPanelBrandError("Set an address first.");
+      return;
+    }
+
+    const vertices = ctx.vertices;
+    const mPerPx = ctx.mPerPx;
+    const orientationDeg = ctx.orientationDeg;
+    const panelSpec = ctx.panelSpec;
+    const panelSpecMode = ctx.panelSpecMode;
+    const panelChoiceId = ctx.panelChoiceId;
+    const roofAreaM2 = ctx.roofAreaM2;
+    const lat = ctx.lat;
+    const lng = ctx.lng;
 
     panelBrandAbortRef.current?.abort();
     const ac = new AbortController();
@@ -421,57 +509,59 @@ export function SunnyviewExperience() {
     setPanelBrandBusy(true);
     setPanelBrandError(null);
 
-    const fits = PANEL_OPTIONS.map((o) => {
-      const orient = mPerPx
-        ? bestPackingOrientationDeg({
-            polygon: vertices,
-            mPerPx,
-            panelSpec: o.spec,
-            seedDeg: polygonMajorAxisDeg(vertices),
-          })
-        : orientationDeg;
-      const count = mPerPx
-        ? packPanelsDeterministic({
-            usablePolygon: vertices,
-            mPerPx,
-            panel: { widthM: o.spec.widthM, heightM: o.spec.heightM, gapM: o.spec.gapM },
-            orientationDeg: orient,
-          }).length
-        : 0;
+    const fits: Array<{
+      id: string;
+      label: string;
+      brand: string;
+      model: string;
+      sourceUrl?: string;
+      spec: { widthM: number; heightM: number; wattW: number; gapM: number };
+      fit: { panelCount: number; dcKw: number; orientationDeg: number };
+    }> = PANEL_OPTIONS.map((o) => {
+      const orient = bestPackingOrientationDeg({
+        polygon: vertices,
+        mPerPx,
+        panelSpec: o.spec,
+        seedDeg: polygonMajorAxisDeg(vertices),
+      });
+      const count = packPanelsDeterministic({
+        usablePolygon: vertices,
+        mPerPx,
+        panel: { widthM: o.spec.widthM, heightM: o.spec.heightM, gapM: o.spec.gapM },
+        orientationDeg: orient,
+      }).length;
       const dc = (count * o.spec.wattW) / 1000;
       return {
         id: o.id,
         label: o.label,
         brand: o.brand,
         model: o.model,
+        sourceUrl: o.sourceUrl,
         spec: { widthM: o.spec.widthM, heightM: o.spec.heightM, wattW: o.spec.wattW, gapM: o.spec.gapM },
         fit: { panelCount: count, dcKw: dc, orientationDeg: orient },
       };
     });
 
     if (panelSpecMode === "manual") {
-      const orient = mPerPx
-        ? bestPackingOrientationDeg({
-            polygon: vertices,
-            mPerPx,
-            panelSpec,
-            seedDeg: polygonMajorAxisDeg(vertices),
-          })
-        : orientationDeg;
-      const count = mPerPx
-        ? packPanelsDeterministic({
-            usablePolygon: vertices,
-            mPerPx,
-            panel: { widthM: panelSpec.widthM, heightM: panelSpec.heightM, gapM: panelSpec.gapM },
-            orientationDeg: orient,
-          }).length
-        : 0;
+      const orient = bestPackingOrientationDeg({
+        polygon: vertices,
+        mPerPx,
+        panelSpec,
+        seedDeg: polygonMajorAxisDeg(vertices),
+      });
+      const count = packPanelsDeterministic({
+        usablePolygon: vertices,
+        mPerPx,
+        panel: { widthM: panelSpec.widthM, heightM: panelSpec.heightM, gapM: panelSpec.gapM },
+        orientationDeg: orient,
+      }).length;
       const dc = (count * panelSpec.wattW) / 1000;
       fits.unshift({
         id: "custom",
         label: "Custom size",
         brand: "(custom)",
         model: "User-defined",
+        sourceUrl: undefined,
         spec: {
           widthM: panelSpec.widthM,
           heightM: panelSpec.heightM,
@@ -484,14 +574,6 @@ export function SunnyviewExperience() {
 
     (async () => {
       try {
-        console.info("[panel-recommend] client request", {
-          lat: Number(lat.toFixed(5)),
-          lng: Number(lng.toFixed(5)),
-          roofAreaM2: Number(roofAreaM2.toFixed(1)),
-          options: fits.length,
-          panelSpecMode,
-        });
-
         let geminiKey = "";
         try {
           geminiKey = String(window.localStorage.getItem("sunnyview-gemini-api-key-v1") ?? "").trim();
@@ -524,37 +606,43 @@ export function SunnyviewExperience() {
             message.includes("Missing GEMINI_API_KEY") || message.includes("Missing Gemini API key")
               ? "Missing Gemini API key. Add it on the landing page."
               : message;
-          const isMissingKey = normalized.toLowerCase().includes("missing gemini api key");
-          if (!isMissingKey) {
-            console.warn("[panel-recommend] client non-200", {
-              status: res.status,
-              message: normalized,
-              attemptedModels: Array.isArray(data?.attemptedModels) ? data.attemptedModels : undefined,
-            });
-          }
-          throw new Error(normalized);
+          const attempted = Array.isArray(data?.attemptedModels)
+            ? data.attemptedModels.map((v: any) => String(v)).filter(Boolean)
+            : [];
+          const withAttempted = attempted.length
+            ? `${normalized} (models tried: ${attempted.join(", ")})`
+            : normalized;
+          throw new Error(withAttempted);
         }
 
         const selectedId = typeof data?.selectedId === "string" ? data.selectedId : null;
         const brand = typeof data?.brand === "string" ? data.brand : null;
         const model = typeof data?.model === "string" ? data.model : null;
+        const sourceUrl = typeof data?.sourceUrl === "string" ? data.sourceUrl : null;
         const why = Array.isArray(data?.why) ? data.why.map((v: any) => String(v)) : [];
         const caveats = Array.isArray(data?.caveats) ? data.caveats.map((v: any) => String(v)) : [];
-        if (!selectedId || !brand || !model) throw new Error("Invalid Gemini response");
+        if (!selectedId || !brand || !model || !sourceUrl) throw new Error("Invalid Gemini response");
 
-        console.info("[panel-recommend] client success", {
-          selectedId,
-          brand,
-          panelModel: model,
-          usedModel: typeof data?.usedModel === "string" ? data.usedModel : null,
-        });
+        const usedModel = typeof data?.usedModel === "string" ? String(data.usedModel) : null;
+        const attemptedModels = Array.isArray(data?.attemptedModels)
+          ? data.attemptedModels.map((v: any) => String(v)).filter(Boolean)
+          : [];
+        const fallbackReason = typeof data?.fallbackReason === "string" ? String(data.fallbackReason) : null;
+        const kind: "gemini" | "fallback" = "gemini";
 
         setPanelBrandRec({
           selectedId,
           brand,
           model,
+          sourceUrl,
           why: why.slice(0, 4),
           caveats: caveats.slice(0, 3),
+          source: {
+            kind,
+            usedModel,
+            fallbackReason,
+            attemptedModels,
+          },
         });
 
         if (panelSpecMode === "auto") {
@@ -575,8 +663,6 @@ export function SunnyviewExperience() {
       } catch (e) {
         if (ac.signal.aborted) return;
         const msg = e instanceof Error ? e.message : "Panel recommendation failed.";
-        // Treat Gemini failures as user-facing state (not a console error).
-        // Console errors trigger the Next.js dev overlay and look like crashes.
         setPanelBrandError(msg);
       } finally {
         if (!ac.signal.aborted) setPanelBrandBusy(false);
@@ -584,20 +670,7 @@ export function SunnyviewExperience() {
     })();
 
     return () => ac.abort();
-  }, [
-    closed,
-    lat,
-    lng,
-    mPerPx,
-    orientationDeg,
-    panelChoiceId,
-    panelBrandReqSeq,
-    panelsMounted,
-    roofAreaM2,
-    panelSpec,
-    panelSpecMode,
-    vertices,
-  ]);
+  }, [panelBrandReqSeq, panelsMounted]);
 
   const fallbackEstimate = useMemo((): Estimate => {
     const annualKwh = Math.max(0, dcKw) * 1400;
@@ -1387,7 +1460,6 @@ export function SunnyviewExperience() {
                   setPanelBrandRec(null)
                   setPanelBrandError(null)
                   lastPanelAutoKeyRef.current = null
-                  setPanelBrandReqSeq((s) => s + 1)
                 }}
                 title={panelSpecMode === "auto" ? "Switch to manual panel sizing" : "Switch back to auto"}
               >
@@ -1414,6 +1486,22 @@ export function SunnyviewExperience() {
               <div className="text-foreground">
                 Gemini pick: <span className="font-medium">{panelBrandRec.brand}</span> — {panelBrandRec.model}
               </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Source:{" "}
+                {panelBrandRec.source.kind === "fallback"
+                  ? "Local fallback"
+                  : panelBrandRec.source.usedModel
+                    ? `Gemini (${panelBrandRec.source.usedModel})`
+                    : "Gemini"}
+              </div>
+              <div className="mt-1 text-[11px]">
+                Panel info: <a className="underline underline-offset-2 hover:no-underline" href={panelBrandRec.sourceUrl} target="_blank" rel="noreferrer">{panelBrandRec.sourceUrl}</a>
+              </div>
+              {panelBrandRec.source.kind === "fallback" && panelBrandRec.source.fallbackReason ? (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  Reason: {panelBrandRec.source.fallbackReason}
+                </div>
+              ) : null}
               {panelBrandRec.why?.length ? (
                 <ul className="mt-1 list-disc space-y-1 pl-5">
                   {panelBrandRec.why.slice(0, 3).map((w) => (

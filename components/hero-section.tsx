@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { ArrowRight } from "lucide-react"
 import { AccentColorControl } from "@/components/accent-color-control"
 import { LogoPlate } from "@/components/logo-plate"
@@ -16,12 +16,17 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
   const [showLogoHint, setShowLogoHint] = useState(false)
   const [geminiKey, setGeminiKey] = useState("")
   const [showGeminiKey, setShowGeminiKey] = useState(false)
-  const [geminiKeyStatus, setGeminiKeyStatus] = useState<
-    | { state: "idle" }
-    | { state: "checking" }
-    | { state: "valid" }
-    | { state: "invalid"; message: string }
-  >({ state: "idle" })
+
+  const geminiKeyStatus = useMemo(() => {
+    const raw = geminiKey.trim()
+    if (raw.length === 0) return { state: "idle" as const }
+
+    // Format-only validation (instant): Gemini keys are typically URL-safe strings.
+    // We intentionally do not make any network call here.
+    const ok = /^[A-Za-z0-9._-]{20,}$/.test(raw)
+    if (ok) return { state: "valid" as const }
+    return { state: "invalid" as const, message: "Key format looks off" }
+  }, [geminiKey])
 
   useEffect(() => {
     const k = "sunnyview-gemini-api-key-v1"
@@ -53,54 +58,6 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       }
     }, 120)
     return () => window.clearTimeout(t)
-  }, [geminiKey])
-
-  useEffect(() => {
-    const raw = geminiKey.trim()
-    const ac = new AbortController()
-    const t = window.setTimeout(async () => {
-      if (raw.length === 0) {
-        setGeminiKeyStatus({ state: "idle" })
-        return
-      }
-
-      // Basic local sanity check before hitting the network.
-      const basicOk = /^[A-Za-z0-9_\-]{20,}$/.test(raw)
-      if (!basicOk) {
-        setGeminiKeyStatus({ state: "invalid", message: "Key format looks off" })
-        return
-      }
-
-      setGeminiKeyStatus({ state: "checking" })
-      try {
-        const res = await fetch("/api/gemini-validate", {
-          method: "POST",
-          signal: ac.signal,
-          headers: {
-            "content-type": "application/json",
-            "x-gemini-api-key": raw,
-          },
-          body: JSON.stringify({}),
-        })
-        const data = (await res.json().catch(() => null)) as any
-        const ok = Boolean(data?.ok)
-        if (ok) {
-          setGeminiKeyStatus({ state: "valid" })
-          return
-        }
-        const message = typeof data?.error === "string" ? data.error : "Invalid key"
-        setGeminiKeyStatus({ state: "invalid", message })
-      } catch (e) {
-        if (ac.signal.aborted) return
-        const msg = e instanceof Error ? e.message : "Network error"
-        setGeminiKeyStatus({ state: "invalid", message: msg })
-      }
-    }, 450)
-
-    return () => {
-      ac.abort()
-      window.clearTimeout(t)
-    }
   }, [geminiKey])
 
   useEffect(() => {
@@ -200,32 +157,28 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         </span>
       </div>
 
-      <div className="glass-card gradient-border rounded-xl p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
-            <div className="mt-1 text-xs text-muted-foreground">Stored locally in this browser (localStorage).</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div
-              className={
-                geminiKeyStatus.state === "valid"
-                  ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-                  : geminiKeyStatus.state === "checking"
-                    ? "rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"
+        <div className="glass-card gradient-border rounded-xl p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
+              <div className="mt-1 text-xs text-muted-foreground">Stored locally in this browser (localStorage). Format check only.</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div
+                className={
+                  geminiKeyStatus.state === "valid"
+                    ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
                     : geminiKeyStatus.state === "invalid"
                       ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
                       : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
-              }
-            >
-              {geminiKeyStatus.state === "valid"
-                ? "Valid"
-                : geminiKeyStatus.state === "checking"
-                  ? "Checking…"
+                }
+              >
+                {geminiKeyStatus.state === "valid"
+                  ? "Looks valid"
                   : geminiKeyStatus.state === "invalid"
                     ? "Invalid"
                     : "Optional"}
-            </div>
+              </div>
             <button
               type="button"
               className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"

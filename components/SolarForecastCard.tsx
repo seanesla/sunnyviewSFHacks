@@ -16,6 +16,14 @@ type ForecastPayload = {
     source?: string
     warning?: string
   } | null
+  archive365?: {
+    source?: string
+    startDate?: string
+    endDate?: string
+    days?: number
+    sumIrradianceKwhM2?: number | null
+    avgCloudCoverPct?: number | null
+  } | null
   worthIt?: {
     verdict?: "good" | "maybe" | "unlikely"
     paybackYears?: number | null
@@ -23,6 +31,22 @@ type ForecastPayload = {
     annualSavingsUsd?: number
     installCostUsd?: number
     reasons?: string[]
+    assumptions?: {
+      utilityRateUsdPerKwh: number
+      installCostUsdPerW: number
+      goodPaybackYears: number
+      maybePaybackYears: number
+    }
+    basis?:
+      | {
+          kind: "archive-365d"
+          source: "open-meteo-archive"
+          startDate: string
+          endDate: string
+          days: number
+        }
+      | { kind: "fallback"; source: "fallback"; days: number }
+      | { kind: "unavailable"; source: "unavailable"; reason: string }
   }
 }
 
@@ -51,6 +75,7 @@ export function SolarForecastCard({
   const [payload, setPayload] = useState<ForecastPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showVerdictInfo, setShowVerdictInfo] = useState(false)
 
   useEffect(() => {
     if (lat === null || lng === null) return
@@ -113,6 +138,34 @@ export function SolarForecastCard({
   const warning = typeof payload?.meta?.warning === "string" ? payload.meta.warning : null
   const worth = payload?.worthIt ?? null
   const badge = verdictLabel(worth?.verdict)
+  const assumptions = worth?.assumptions ?? null
+  const basis = worth?.basis ?? null
+
+  const basisUnavailableReason = basis?.kind === "unavailable" ? basis.reason : null
+
+  const verdictExplainer = useMemo(() => {
+    const goodY = assumptions?.goodPaybackYears ?? 9
+    const maybeY = assumptions?.maybePaybackYears ?? 14
+    const rate = assumptions?.utilityRateUsdPerKwh ?? 0.25
+    const cost = assumptions?.installCostUsdPerW ?? 2.75
+
+    if (basis?.kind === "unavailable") {
+      return `We couldn't fetch a 365-day weather baseline right now (${basisUnavailableReason ?? "unknown"}). The economics verdict is hidden until that baseline is available.`
+    }
+
+    if (worth?.verdict === "good") {
+      return `"Worth it" means the rough simple payback is under ~${goodY} years (assumes ~$${rate.toFixed(
+        2
+      )}/kWh electricity and ~$${cost.toFixed(2)}/W installed).`
+    }
+    if (worth?.verdict === "maybe") {
+      return `"Maybe" means the rough simple payback is ~${goodY}–${maybeY} years; incentives, your utility rate plan, and install pricing can swing this a lot.`
+    }
+    if (worth?.verdict === "unlikely") {
+      return `"Unlikely" means the rough simple payback is over ~${maybeY} years under the current assumptions. This is about economics, not whether panels will physically work.`
+    }
+    return "Verdict appears once a roof outline and layout exist."
+  }, [assumptions, basis?.kind, basisUnavailableReason, worth?.verdict])
 
   const chartData = useMemo(
     () =>
@@ -128,13 +181,55 @@ export function SolarForecastCard({
     <div className={className}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-foreground">7-day production forecast</div>
-          <div className="mt-1 text-[11px] text-muted-foreground">
-            Uses Open-Meteo radiation + your current layout (rough).
-          </div>
+           <div className="text-sm font-semibold text-foreground">Production forecast</div>
+           <div className="mt-1 text-[11px] text-muted-foreground">
+            Chart: next 7 days (Open-Meteo) • Verdict: 365-day baseline when available.
+           </div>
+          {basis?.kind === "archive-365d" ? (
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              Economics verdict uses a 365-day Open-Meteo archive average.
+            </div>
+          ) : basis?.kind === "unavailable" ? (
+            <div className="mt-1 text-[11px] text-amber-300">
+              Annual baseline unavailable; verdict is hidden.
+            </div>
+          ) : null}
           {warning ? <div className="mt-1 text-[11px] text-amber-300">{warning}</div> : null}
         </div>
-        <div className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${badge.cls}`}>{badge.text}</div>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${badge.cls}`}
+            onClick={() => setShowVerdictInfo((v) => !v)}
+            aria-expanded={showVerdictInfo}
+            title="Click to learn what this means"
+          >
+            {badge.text}
+          </button>
+          {showVerdictInfo ? (
+            <div className="absolute right-0 top-[calc(100%+0.6rem)] z-20 w-[min(86vw,22rem)] rounded-xl border border-border/70 bg-background/80 p-3 text-[11px] text-foreground shadow-[0_20px_50px_-32px_rgba(0,0,0,0.95)] backdrop-blur-md">
+              <div className="font-semibold">What “{badge.text}” means</div>
+              <div className="mt-1 text-muted-foreground">{verdictExplainer}</div>
+              <div className="mt-2 text-muted-foreground">
+                Based on:{" "}
+                {basis?.kind === "archive-365d"
+                  ? `Open-Meteo archive (${basis.startDate} to ${basis.endDate}), your current DC size, and losses ${lossesPct}%.`
+                  : basis?.kind === "unavailable"
+                    ? `Annual baseline unavailable (${basisUnavailableReason ?? "unknown"}).`
+                    : `Fallback profile, your current DC size, and losses ${lossesPct}%.`}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-md bg-secondary px-2.5 py-1 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+                  onClick={() => setShowVerdictInfo(false)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-3">

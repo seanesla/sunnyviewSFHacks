@@ -6,6 +6,81 @@ export const runtime = "nodejs"
 const LOG_PREFIX = "[panel-recommend]"
 const MODEL_NOT_FOUND_RE = /not found|not supported|not available|unsupported model/i
 
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n))
+}
+
+async function fetchClimateSummary(opts: { lat: number; lng: number; signal: AbortSignal }) {
+  const url = new URL("https://api.open-meteo.com/v1/forecast")
+  url.searchParams.set("latitude", String(opts.lat))
+  url.searchParams.set("longitude", String(opts.lng))
+  url.searchParams.set("timezone", "auto")
+  url.searchParams.set("forecast_days", "7")
+  url.searchParams.set("daily", "shortwave_radiation_sum,cloudcover_mean")
+
+  const res = await fetch(url.toString(), {
+    signal: opts.signal,
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  })
+  if (!res.ok) throw new Error(`Climate fetch failed (${res.status})`)
+  const json = (await res.json().catch(() => null)) as any
+
+  const sw: Array<number | null> = Array.isArray(json?.daily?.shortwave_radiation_sum)
+    ? json.daily.shortwave_radiation_sum.map((v: any) => (Number.isFinite(Number(v)) ? Number(v) : null))
+    : []
+  const cc: Array<number | null> = Array.isArray(json?.daily?.cloudcover_mean)
+    ? json.daily.cloudcover_mean.map((v: any) => (Number.isFinite(Number(v)) ? Number(v) : null))
+    : []
+
+  const irrKwhM2 = sw
+    .slice(0, 7)
+    .map((mj) => (mj === null ? null : mj * 0.2777777778))
+    .filter((v): v is number => v !== null)
+  const clouds = cc.slice(0, 7).filter((v): v is number => v !== null)
+
+  const avgIrr = irrKwhM2.length ? irrKwhM2.reduce((a, b) => a + b, 0) / irrKwhM2.length : null
+  const avgCloud = clouds.length ? clouds.reduce((a, b) => a + b, 0) / clouds.length : null
+
+  return {
+    source: "open-meteo",
+    avgDailyIrradianceKwhM2: avgIrr !== null ? Number(avgIrr.toFixed(2)) : null,
+    avgCloudCoverPct: avgCloud !== null ? Math.round(clamp(avgCloud, 0, 100)) : null,
+  }
+}
+
+async function fetchStaticMapBase64(opts: {
+  origin: string
+  lat: number
+  lng: number
+  zoom?: number
+  signal: AbortSignal
+}) {
+  const url = new URL("/api/static-map", opts.origin)
+  url.searchParams.set("lat", String(opts.lat))
+  url.searchParams.set("lng", String(opts.lng))
+  url.searchParams.set("zoom", String(opts.zoom ?? 20))
+  url.searchParams.set("w", "520")
+  url.searchParams.set("h", "360")
+  url.searchParams.set("scale", "2")
+
+  const res = await fetch(url.toString(), {
+    signal: opts.signal,
+    headers: { accept: "image/*" },
+    cache: "no-store",
+  })
+  if (!res.ok) return null
+  const contentType = (res.headers.get("content-type") ?? "").split(";")[0] || "image/png"
+  if (!contentType.startsWith("image/")) return null
+  const buf = Buffer.from(await res.arrayBuffer())
+  if (!buf.byteLength) return null
+  return {
+    mimeType: contentType,
+    dataBase64: buf.toString("base64"),
+    note: "Satellite imagery centered on the address" as const,
+  }
+}
+
 function uniqueModels(models: Array<string | null | undefined>) {
   const seen = new Set<string>()
   const out: string[] = []
@@ -30,6 +105,7 @@ const BodySchema = z.object({
         label: z.string(),
         brand: z.string(),
         model: z.string(),
+        sourceUrl: z.string().url().optional(),
         spec: z.object({
           widthM: z.number().positive(),
           heightM: z.number().positive(),
@@ -65,19 +141,39 @@ function tryParseJson(s: string) {
   }
 }
 
+function extractFirstJsonObject(s: string): any {
+  const raw = String(s ?? "")
+    .replace(/```json\s*/gi, "")
+    .replace(/```/g, "")
+    .trim()
+
+  const direct = tryParseJson(raw)
+  if (direct) return direct
+
+  const start = raw.indexOf("{")
+  if (start < 0) return null
+
+  let depth = 0
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i]
+    if (ch === "{") depth += 1
+    else if (ch === "}") depth -= 1
+    if (depth === 0) {
+      const slice = raw.slice(start, i + 1)
+      return tryParseJson(slice)
+    }
+  }
+
+  return null
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}))
   const headerKey = req.headers.get("x-gemini-api-key")?.trim() || ""
   const bodyKeyRaw = (body as any)?.geminiApiKey ?? (body as any)?.apiKey
   const bodyKey = typeof bodyKeyRaw === "string" ? bodyKeyRaw.trim() : ""
   const key = (process.env.GEMINI_API_KEY?.trim() || headerKey || bodyKey || "").trim()
-  const configuredModel = process.env.GEMINI_MODEL?.trim() || ""
-  const modelsToTry = uniqueModels([
-    configuredModel,
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-  ])
+  const modelsToTry = ["gemini-2.5-flash"]
 
   const parsed = BodySchema.safeParse(body)
   if (!parsed.success) {
@@ -87,54 +183,10 @@ export async function POST(req: Request) {
   const { lat, lng, roofAreaM2, options, currentId, notes } = parsed.data
   const loc = lat !== undefined && lng !== undefined ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : "unknown"
 
-  function fallbackRecommendation(reason: string, attemptedModels: string[] = []) {
-    const ranked = options
-      .map((o) => ({
-        opt: o,
-        dcKw: Number(o.fit?.dcKw ?? 0),
-        panelCount: Number(o.fit?.panelCount ?? 0),
-      }))
-      .sort((a, b) => (b.dcKw !== a.dcKw ? b.dcKw - a.dcKw : b.panelCount - a.panelCount))
-
-    const current = currentId ? options.find((o) => o.id === currentId) : null
-    const best = ranked[0]?.opt ?? options[0]
-    const selected = current ?? best
-    const dcKw = Number(selected.fit?.dcKw ?? 0)
-    const panelCount = Number(selected.fit?.panelCount ?? 0)
-
-    const why = [
-      `Picked ${selected.brand} ${selected.model} using a local fallback rule because Gemini was unavailable.`,
-      `This option currently fits about ${panelCount} panels (${dcKw.toFixed(1)} kW DC) for your traced roof.`,
-      "You can still switch models manually if local installer pricing or stock favors another panel.",
-    ]
-    const caveats = [
-      "AI recommendation is temporarily unavailable; this is a deterministic fallback.",
-      "Always confirm final panel choice with installer pricing, permits, and shading checks.",
-    ]
-
-    console.warn(`${LOG_PREFIX} fallback`, {
-      reason,
-      selectedId: selected.id,
-      attemptedModels,
-    })
-
-    return NextResponse.json(
-      {
-        selectedId: selected.id,
-        brand: selected.brand,
-        model: selected.model,
-        why,
-        caveats,
-        usedModel: "local-fallback",
-        fallbackReason: reason,
-        attemptedModels,
-      },
-      { status: 200 }
-    )
-  }
+  const origin = new URL(req.url).origin
 
   if (!key) {
-    return fallbackRecommendation("Missing GEMINI_API_KEY")
+    return NextResponse.json({ error: "Missing Gemini API key" }, { status: 401 })
   }
 
   console.info(`${LOG_PREFIX} request`, {
@@ -151,15 +203,56 @@ export async function POST(req: Request) {
       const fitText = fit
         ? `fits ${fit.panelCount} panels (${fit.dcKw.toFixed(1)} kW DC) at orient ${fit.orientationDeg ?? "?"}°`
         : "fit unknown"
-      return `- id=${o.id} | ${o.brand} ${o.model} | ${o.spec.widthM.toFixed(3)}m x ${o.spec.heightM.toFixed(3)}m | ${Math.round(o.spec.wattW)}W | ${fitText}`
+      const src = o.sourceUrl ? ` | source=${o.sourceUrl}` : ""
+      return `- id=${o.id} | ${o.brand} ${o.model} | ${o.spec.widthM.toFixed(3)}m x ${o.spec.heightM.toFixed(3)}m | ${Math.round(o.spec.wattW)}W | ${fitText}${src}`
     })
     .join("\n")
+
+  let climateSummaryText = "unknown"
+  let imagePart: any = null
+
+  if (lat !== undefined && lng !== undefined) {
+    const ac = new AbortController()
+    const t = setTimeout(() => ac.abort(), 6500)
+    try {
+      const [climateRes, mapRes] = await Promise.allSettled([
+        fetchClimateSummary({ lat, lng, signal: ac.signal }),
+        fetchStaticMapBase64({ origin, lat, lng, zoom: 20, signal: ac.signal }),
+      ])
+
+      if (climateRes.status === "fulfilled") {
+        const c = climateRes.value
+        const irr = c.avgDailyIrradianceKwhM2
+        const cc = c.avgCloudCoverPct
+        climateSummaryText =
+          irr !== null || cc !== null
+            ? `Open-Meteo 7-day avg irradiance ${irr ?? "?"} kWh/m^2/day, avg cloud cover ${cc ?? "?"}%`
+            : "Open-Meteo unavailable"
+      }
+
+      if (mapRes.status === "fulfilled" && mapRes.value) {
+        imagePart = {
+          inline_data: {
+            mime_type: mapRes.value.mimeType,
+            data: mapRes.value.dataBase64,
+          },
+        }
+      }
+    } catch {
+      // ignore enrichment failures
+    } finally {
+      clearTimeout(t)
+      ac.abort()
+    }
+  }
 
   const prompt = `You are helping pick the best solar panel option for a specific roof.
 
 Inputs:
 - Location: ${loc}
 - Usable roof plane area: ${roofAreaM2.toFixed(1)} m^2
+ - Climate snapshot: ${climateSummaryText}
+ - Satellite context: ${imagePart ? "Attached image (centered on the roof location)." : "No image available."}
 ${currentId ? `- Current selection id: ${currentId}` : ""}
 ${notes ? `- Notes: ${notes}` : ""}
 
@@ -168,16 +261,18 @@ ${optionLines}
 
 Task:
 - Choose the best option id for this roof.
-- Explain briefly why it is best given the computed fit counts (panelCount/dcKw) and general reliability.
+- Use the satellite image (if attached) to infer shading risk (trees/nearby tall buildings) and roof complexity.
+- Use the climate snapshot as a rough solar resource indicator.
+- Explain briefly why it is best given fit counts (panelCount/dcKw) and general reliability.
 - Include 2 caveats (availability/pricing, permitting/shading).
 
 Return STRICT JSON with keys:
-{ "selectedId": string, "brand": string, "model": string, "why": string[], "caveats": string[] }
+{ "selectedId": string, "brand": string, "model": string, "sourceUrl": string, "why": string[], "caveats": string[] }
 No extra keys, no markdown.`
 
   const allowedIds = new Set(options.map((o) => o.id))
   const requestBody = {
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    contents: [{ role: "user", parts: [{ text: prompt }, ...(imagePart ? [imagePart] : [])] }],
     generationConfig: {
       temperature: 0.2,
       maxOutputTokens: 300,
@@ -226,28 +321,39 @@ No extra keys, no markdown.`
       })
       const canRetryModel = res.status === 404 || res.status === 429 || MODEL_NOT_FOUND_RE.test(msg)
       if (canRetryModel) continue
-      return fallbackRecommendation(msg, attemptedModels)
+      return NextResponse.json(
+        { error: msg, attemptedModels },
+        { status: res.status >= 400 && res.status < 600 ? res.status : 502 }
+      )
     }
 
     const text = extractText(json)
-    const parsedJson = tryParseJson(text)
+    const parsedJson = extractFirstJsonObject(text)
     const out = parsedJson && typeof parsedJson === "object" ? parsedJson : null
 
     const selectedId = typeof out?.selectedId === "string" ? out.selectedId : null
     const brand = typeof out?.brand === "string" ? out.brand : null
     const model = typeof out?.model === "string" ? out.model : null
+    const outSourceUrl = typeof out?.sourceUrl === "string" ? out.sourceUrl : null
     const why = Array.isArray(out?.why) ? out.why.map((v: any) => String(v)).filter(Boolean) : []
     const caveats = Array.isArray(out?.caveats) ? out.caveats.map((v: any) => String(v)).filter(Boolean) : []
 
-    if (!selectedId || !allowedIds.has(selectedId) || !brand || !model) {
+    const optionSourceUrl = selectedId ? options.find((o) => o.id === selectedId)?.sourceUrl ?? null : null
+    const sourceUrl = outSourceUrl || optionSourceUrl
+
+    if (!selectedId || !allowedIds.has(selectedId) || !brand || !model || !sourceUrl) {
       lastUpstreamError = "Failed to parse Gemini JSON"
       console.warn(`${LOG_PREFIX} parse failed`, {
         model: modelName,
         selectedId,
         hasBrand: !!brand,
         hasModel: !!model,
+        hasSourceUrl: !!sourceUrl,
       })
-      return fallbackRecommendation("Failed to parse Gemini JSON", attemptedModels)
+      return NextResponse.json(
+        { error: "Failed to parse Gemini JSON", attemptedModels },
+        { status: 502 }
+      )
     }
 
     console.info(`${LOG_PREFIX} success`, {
@@ -262,6 +368,7 @@ No extra keys, no markdown.`
         selectedId,
         brand,
         model,
+        sourceUrl,
         why: why.slice(0, 4),
         caveats: caveats.slice(0, 3),
         usedModel: modelName,
@@ -270,5 +377,5 @@ No extra keys, no markdown.`
     )
   }
 
-  return fallbackRecommendation(lastUpstreamError, attemptedModels)
+  return NextResponse.json({ error: lastUpstreamError, attemptedModels }, { status: 502 })
 }

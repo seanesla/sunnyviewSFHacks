@@ -688,13 +688,15 @@ export function RoofCanvas({
     [internalSize.h, internalSize.w, setView]
   )
 
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
+  const handleWheelNative = useCallback(
+    (e: WheelEvent) => {
       const container = containerRef.current
       if (!container) return
 
-      // Prevent page scroll when the user is interacting with the canvas.
-      e.preventDefault()
+      // React may attach wheel listeners as passive in some environments.
+      // Use a native non-passive handler to prevent parent scrolling.
+      if (e.cancelable) e.preventDefault()
+      e.stopPropagation()
 
       const rect = container.getBoundingClientRect()
       const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
@@ -705,6 +707,29 @@ export function RoofCanvas({
     },
     [toInternal, zoomBy]
   )
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const container = containerRef.current
+    if (!canvas || !container) return
+
+    const opts: AddEventListenerOptions = { passive: false, capture: true }
+
+    const handler = (e: WheelEvent) => {
+      // Stop scroll chaining and any parent capture handlers.
+      if (typeof (e as any).stopImmediatePropagation === "function") {
+        ;(e as any).stopImmediatePropagation()
+      }
+      handleWheelNative(e)
+    }
+
+    canvas.addEventListener("wheel", handler, opts)
+    container.addEventListener("wheel", handler, opts)
+    return () => {
+      canvas.removeEventListener("wheel", handler as EventListener, opts)
+      container.removeEventListener("wheel", handler as EventListener, opts)
+    }
+  }, [handleWheelNative])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -1043,7 +1068,6 @@ export function RoofCanvas({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onDoubleClick={onDoubleClick}
-          onWheel={onWheel}
           onContextMenu={(e) => e.preventDefault()}
         />
         {background.kind === "image" && imageError?.src === imageSrc && (
