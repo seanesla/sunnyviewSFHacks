@@ -28,38 +28,65 @@ type Estimate = {
   assumptions?: unknown;
 };
 
+type CandidatePolygon = {
+  id: string;
+  polygon: Point[];
+  score?: number;
+};
+
 function coerceNumber(v: unknown): number | null {
   const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
   return Number.isFinite(n) ? n : null;
 }
 
 function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
-  if (!Array.isArray(data)) return null;
-  const pts: Point[] = [];
-  for (const item of data) {
-    if (Array.isArray(item) && item.length >= 2) {
-      const x = coerceNumber(item[0]);
-      const y = coerceNumber(item[1]);
-      if (x === null || y === null) return null;
-      pts.push({ x, y });
-      continue;
+  const parsePointList = (raw: unknown): Point[] | null => {
+    if (!Array.isArray(raw)) return null;
+    const pts: Point[] = [];
+    for (const item of raw) {
+      if (Array.isArray(item) && item.length >= 2) {
+        const x = coerceNumber(item[0]);
+        const y = coerceNumber(item[1]);
+        if (x === null || y === null) return null;
+        pts.push({ x, y });
+        continue;
+      }
+      if (item && typeof item === "object") {
+        const maybePoint = item as { x?: unknown; y?: unknown };
+        const x = coerceNumber(maybePoint.x);
+        const y = coerceNumber(maybePoint.y);
+        if (x === null || y === null) return null;
+        pts.push({ x, y });
+        continue;
+      }
+      return null;
     }
-    if (item && typeof item === "object") {
-      const x = coerceNumber((item as any).x);
-      const y = coerceNumber((item as any).y);
-      if (x === null || y === null) return null;
-      pts.push({ x, y });
-      continue;
-    }
-    return null;
-  }
-  if (pts.length < 3) return null;
+    if (pts.length < 3) return null;
+    const normalized = pts.every(
+      (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1,
+    );
+    if (normalized) return pts.map((p) => ({ x: p.x * w, y: p.y * h }));
+    return pts;
+  };
 
-  const normalized = pts.every(
-    (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1,
-  );
-  if (normalized) return pts.map((p) => ({ x: p.x * w, y: p.y * h }));
-  return pts;
+  const direct = parsePointList(data);
+  if (direct) return direct;
+
+  if (data && typeof data === "object") {
+    const maybeGeo = data as {
+      type?: unknown;
+      coordinates?: unknown;
+    };
+    const type =
+      typeof maybeGeo.type === "string" ? maybeGeo.type.toLowerCase() : null;
+    if (type === "polygon" && Array.isArray(maybeGeo.coordinates)) {
+      const ring = maybeGeo.coordinates[0];
+      const parsed = parsePointList(ring);
+      if (parsed) return parsed;
+    }
+  }
+
+  return null;
 }
 
 export function SunnyviewExperience() {
@@ -234,9 +261,11 @@ export function SunnyviewExperience() {
     if (!panelsMounted) return;
     const hasSite = Number.isFinite(lat ?? NaN) && Number.isFinite(lng ?? NaN);
     if (!hasSite || dcKw <= 0) return;
+    let localAbort: AbortController | null = null;
     const t = window.setTimeout(async () => {
       estimateAbortRef.current?.abort();
       const ac = new AbortController();
+      localAbort = ac;
       estimateAbortRef.current = ac;
       try {
         const res = await fetch(apiUrl("/api/estimate"), {
@@ -275,7 +304,10 @@ export function SunnyviewExperience() {
         // keep fallback
       }
     }, 320);
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(t);
+      localAbort?.abort();
+    };
   }, [
     panelsMounted,
     lat,
@@ -309,10 +341,23 @@ export function SunnyviewExperience() {
   const [showShare, setShowShare] = useState(false);
   const creatingProjectRef = useRef(false);
   const projectCreateFailedRef = useRef(false);
+  const [autoOutlineBusy, setAutoOutlineBusy] = useState(false);
+  const [autoOutlineError, setAutoOutlineError] = useState<string | null>(null);
+  const [autoOutlineHint, setAutoOutlineHint] = useState<string | null>(null);
+  const [candidatePolygons, setCandidatePolygons] = useState<CandidatePolygon[] | null>(null);
+
+  useEffect(() => {
+    if (mapInput.kind === "image") return;
+    setCandidatePolygons(null);
+    setAutoOutlineBusy(false);
+    setAutoOutlineError(null);
+    setAutoOutlineHint(null);
+  }, [mapInput.kind]);
 
   function returnToLanding() {
     setShowShare(false);
     setSettingsOpen(false);
+    setActionNotice(null);
     setPhase("landing");
   }
 
@@ -356,6 +401,9 @@ export function SunnyviewExperience() {
         if (slug) setShareSlug(slug);
       } catch {
         projectCreateFailedRef.current = true;
+        setActionNotice(
+          "Could not connect to project backend. Sharing is currently unavailable.",
+        );
         // ignore
       } finally {
         creatingProjectRef.current = false;
@@ -434,9 +482,11 @@ export function SunnyviewExperience() {
     caveat: string;
   } | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   async function runExplain() {
     setExplainLoading(true);
+    setActionNotice(null);
     try {
       const res = await fetch(apiUrl("/api/explain"), {
         method: "POST",
@@ -453,11 +503,20 @@ export function SunnyviewExperience() {
         }),
       });
       const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Explain failed (${res.status})`,
+        );
+      }
       const bullets = Array.isArray(data?.bullets)
         ? data.bullets.map((b: any) => String(b))
         : null;
       const caveat = data?.caveat
         ? String(data.caveat)
+        : Array.isArray(data?.caveats) && data.caveats.length
+          ? String(data.caveats[0])
         : "Solar output is an estimate; shading, tilt, and local conditions can change results.";
       if (bullets && bullets.length) {
         setExplainText({ bullets: bullets.slice(0, 3), caveat });
@@ -491,6 +550,7 @@ export function SunnyviewExperience() {
       explainText?.bullets?.join(" ") ??
       `This layout fits ${panelCount} panels (${dcKw.toFixed(1)} kilowatts DC) and produces about ${Math.round(estimate.annualKwh).toLocaleString()} kilowatt-hours per year.`;
     setTtsLoading(true);
+    setActionNotice(null);
     try {
       const res = await fetch(apiUrl("/api/tts"), {
         method: "POST",
@@ -498,13 +558,31 @@ export function SunnyviewExperience() {
         body: JSON.stringify({ text }),
       });
       const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Text-to-speech failed (${res.status})`,
+        );
+      }
       const audioUrl =
         typeof data?.audioUrl === "string" ? data.audioUrl : null;
-      if (!audioUrl) return;
+      if (!audioUrl) {
+        setActionNotice(
+          typeof data?.note === "string"
+            ? data.note
+            : "Text-to-speech is not available right now.",
+        );
+        return;
+      }
       const audio = new Audio(audioUrl);
       await audio.play();
-    } catch {
-      // ignore
+    } catch (e) {
+      setActionNotice(
+        e instanceof Error
+          ? e.message
+          : "Text-to-speech is not available right now.",
+      );
     } finally {
       setTtsLoading(false);
     }
@@ -512,17 +590,41 @@ export function SunnyviewExperience() {
 
   async function runAutoOutline() {
     if (mapInput.kind !== "image" || !mapInput.image?.dataUrl) return;
+    setAutoOutlineBusy(true);
+    setAutoOutlineError(null);
+    setAutoOutlineHint(null);
+    setCandidatePolygons(null);
     try {
+      const meta = {
+        widthPx: mapInput.image.widthPx,
+        heightPx: mapInput.image.heightPx,
+        zoom,
+        lat,
+        lng,
+        address: mapInput.address ?? null,
+        staticMap: { w: 520, h: 360, scale: 2 },
+      };
+
       const res = await fetch(apiUrl("/api/segment"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           imageDataUrl: mapInput.image.dataUrl,
           mode: "roof",
+          meta,
         }),
       });
-      if (!res.ok) return;
       const data = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        setAutoOutlineError(
+          typeof data?.error === "string"
+            ? data.error
+            : `Auto-outline failed (${res.status}).`,
+        );
+        if (typeof data?.note === "string") setAutoOutlineHint(data.note);
+        return;
+      }
+
       const polyRaw =
         data?.roofPolygon ??
         data?.polygon ??
@@ -531,13 +633,66 @@ export function SunnyviewExperience() {
         data?.result?.polygon;
       const w = mapInput.image.widthPx;
       const h = mapInput.image.heightPx;
+
+      const candidatesRaw = Array.isArray(data?.candidates)
+        ? data.candidates
+        : [];
+      const parsedCandidates = candidatesRaw
+        .map((candidate: any, idx: number): CandidatePolygon | null => {
+          const candidatePoly = normalizePolygon(
+            candidate?.polygon ?? candidate?.roofPolygon,
+            w,
+            h,
+          );
+          if (!candidatePoly) return null;
+          const id =
+            typeof candidate?.id === "string" && candidate.id.trim().length > 0
+              ? candidate.id
+              : `candidate-${idx + 1}`;
+          const score = coerceNumber(candidate?.score);
+          return { id, polygon: candidatePoly, score: score ?? undefined };
+        })
+        .filter((candidate: CandidatePolygon | null): candidate is CandidatePolygon =>
+          Boolean(candidate),
+        );
+
+      if (parsedCandidates.length > 0) {
+        setCandidatePolygons(parsedCandidates);
+        setAutoOutlineHint(
+          typeof data?.note === "string"
+            ? data.note
+            : "Multiple roof candidates found. Click the correct roof.",
+        );
+        return;
+      }
+
       const poly = normalizePolygon(polyRaw, w, h);
-      if (!poly) return;
+      if (!poly) {
+        setAutoOutlineError("No usable roof outline was returned.");
+        return;
+      }
       setVertices(poly);
       setClosed(true);
-    } catch {
-      // ignore
+      setCandidatePolygons(null);
+      setAutoOutlineHint("Roof outline detected.");
+    } catch (e) {
+      setAutoOutlineError(
+        e instanceof Error ? e.message : "Auto-outline failed.",
+      );
+    } finally {
+      setAutoOutlineBusy(false);
     }
+  }
+
+  function handlePickCandidate(id: string) {
+    if (!candidatePolygons || candidatePolygons.length === 0) return;
+    const picked = candidatePolygons.find((candidate) => candidate.id === id);
+    if (!picked) return;
+    setVertices(picked.polygon);
+    setClosed(true);
+    setCandidatePolygons(null);
+    setAutoOutlineError(null);
+    setAutoOutlineHint("Candidate outline applied.");
   }
 
   const shareUrl = useMemo(() => {
@@ -545,6 +700,12 @@ export function SunnyviewExperience() {
     if (typeof window === "undefined") return null;
     return `${window.location.origin}/s/${shareSlug}`;
   }, [shareSlug]);
+
+  const shareDisabledReason = !hasBackend
+    ? "Sharing requires an external backend (/api/projects and /s/:shareSlug)."
+    : !shareSlug
+      ? "Create a project to enable sharing."
+      : null;
 
   const leftPanel = (
     <div className="space-y-4">
@@ -618,9 +779,19 @@ export function SunnyviewExperience() {
         onVerticesChange={(v) => {
           setVertices(v);
           if (v.length < 3) setClosed(false);
+          if (v.length === 0) {
+            setCandidatePolygons(null);
+            setAutoOutlineHint(null);
+            setAutoOutlineError(null);
+          }
         }}
         onClosedChange={setClosed}
         onAutoOutline={runAutoOutline}
+        autoOutlineBusy={autoOutlineBusy}
+        autoOutlineError={autoOutlineError}
+        autoOutlineHint={autoOutlineHint}
+        candidatePolygons={candidatePolygons}
+        onPickCandidate={handlePickCandidate}
       />
     </div>
   );
@@ -690,12 +861,18 @@ export function SunnyviewExperience() {
             type="button"
             className="rounded-md bg-secondary px-3 py-2 text-xs font-medium text-secondary-foreground hover:bg-secondary/80 disabled:opacity-50"
             onClick={() => setShowShare((s) => !s)}
-            disabled={!shareSlug}
-            title={!shareSlug ? "Create a project to enable sharing." : "Share"}
+            disabled={shareDisabledReason !== null}
+            title={shareDisabledReason ?? "Share"}
           >
             Share
           </button>
         </div>
+
+        {(actionNotice || shareDisabledReason) && (
+          <div className="mt-2 text-xs text-muted-foreground">
+            {actionNotice ?? shareDisabledReason}
+          </div>
+        )}
 
         {explainText && (
           <div className="glass-surface mt-3 rounded-lg p-3 text-sm text-foreground">
@@ -868,7 +1045,7 @@ export function SunnyviewExperience() {
 
       {startupDone && !settingsOpen && (
         <div className="pointer-events-none relative z-20 h-full px-2 py-6 sm:px-3 sm:py-8 lg:px-4">
-          {!isMobile ? (
+          {isMobile === null ? null : !isMobile ? (
             <div
               className={cn(
                 "grid h-full min-h-0 grid-cols-1 gap-6",

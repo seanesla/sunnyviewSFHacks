@@ -8,6 +8,8 @@ type BackgroundSpec =
   | { kind: "image"; src: string; widthPx: number; heightPx: number }
   | { kind: "osm"; lat: number; lng: number; zoom: number }
 
+const MAX_TILE_CACHE_SIZE = 220
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
@@ -92,7 +94,9 @@ export function RoofCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const drawRef = useRef<() => void>(() => {})
+  const requestDrawRef = useRef<() => void>(() => {})
   const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
+  const drawRafRef = useRef<number | null>(null)
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
 
@@ -194,7 +198,11 @@ export function RoofCanvas({
             img = new Image()
             img.crossOrigin = "anonymous"
             img.src = `https://tile.openstreetmap.org/${z}/${wrappedX}/${clampedY}.png`
-            img.onload = () => drawRef.current()
+            img.onload = () => requestDrawRef.current()
+            if (tileCacheRef.current.size >= MAX_TILE_CACHE_SIZE) {
+              const oldestKey = tileCacheRef.current.keys().next().value
+              if (oldestKey) tileCacheRef.current.delete(oldestKey)
+            }
             tileCacheRef.current.set(key, img)
           }
 
@@ -452,6 +460,18 @@ export function RoofCanvas({
     drawRef.current = draw
   }, [draw])
 
+  const requestDraw = useCallback(() => {
+    if (drawRafRef.current !== null) return
+    drawRafRef.current = window.requestAnimationFrame(() => {
+      drawRafRef.current = null
+      drawRef.current()
+    })
+  }, [])
+
+  useEffect(() => {
+    requestDrawRef.current = requestDraw
+  }, [requestDraw])
+
   useEffect(() => {
     if (background.kind !== "image" || !imageSrc) {
       imgRef.current = null
@@ -460,22 +480,37 @@ export function RoofCanvas({
     const img = new Image()
     img.onload = () => {
       imgRef.current = img
-      draw()
+      requestDraw()
     }
     img.src = imageSrc
-  }, [background.kind, draw, imageSrc])
+  }, [background.kind, imageSrc, requestDraw])
 
   useEffect(() => {
-    draw()
-  }, [draw])
+    if (background.kind !== "osm") {
+      tileCacheRef.current.clear()
+    }
+  }, [background.kind])
+
+  useEffect(() => {
+    requestDraw()
+  }, [requestDraw])
 
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => draw())
+    const ro = new ResizeObserver(() => requestDraw())
     ro.observe(el)
     return () => ro.disconnect()
-  }, [draw])
+  }, [requestDraw])
+
+  useEffect(() => {
+    return () => {
+      if (drawRafRef.current !== null) {
+        window.cancelAnimationFrame(drawRafRef.current)
+        drawRafRef.current = null
+      }
+    }
+  }, [])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {

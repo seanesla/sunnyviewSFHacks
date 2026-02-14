@@ -23,7 +23,7 @@ function StaticMapImage({ src, alt }: StaticMapImageProps) {
   if (failed) {
     return (
       <div className="grid aspect-[13/9] place-items-center p-3 text-xs text-destructive">
-        Failed to load photo. Check your Mapbox token and try again.
+        Failed to load photo. Try again, or verify the static map backend route.
       </div>
     )
   }

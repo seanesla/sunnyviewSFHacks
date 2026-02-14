@@ -28,6 +28,8 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
   const hueRef = useRef(200)
   const { hue } = useAccent()
   const animRef = useRef<number>(0)
+  const runningRef = useRef(true)
+  const lastFrameRef = useRef(0)
 
   useEffect(() => {
     hueRef.current = hue
@@ -83,8 +85,26 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
     }
     window.addEventListener("mousemove", onMouseMove)
 
+    if (reduceMotion) {
+      const w = canvasEl.width / (window.devicePixelRatio || 1)
+      const h = canvasEl.height / (window.devicePixelRatio || 1)
+      ctx.clearRect(0, 0, w, h)
+      return () => {
+        window.removeEventListener("resize", resize)
+        window.removeEventListener("mousemove", onMouseMove)
+      }
+    }
+
     function animate() {
+      if (!runningRef.current) return
+
       const now = performance.now()
+      if (now - lastFrameRef.current < 33) {
+        animRef.current = requestAnimationFrame(animate)
+        return
+      }
+      lastFrameRef.current = now
+
       const w = canvasEl.width / (window.devicePixelRatio || 1)
       const h = canvasEl.height / (window.devicePixelRatio || 1)
       ctx.clearRect(0, 0, w, h)
@@ -137,12 +157,24 @@ export function PixelGrid({ density = 1, intensity = 1, motion = 1, className }:
       animRef.current = requestAnimationFrame(animate)
     }
 
+    runningRef.current = !document.hidden
     animRef.current = requestAnimationFrame(animate)
 
+    const onVisibilityChange = () => {
+      runningRef.current = !document.hidden
+      if (runningRef.current) {
+        lastFrameRef.current = 0
+        animRef.current = requestAnimationFrame(animate)
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+
     return () => {
+      runningRef.current = false
       cancelAnimationFrame(animRef.current)
       window.removeEventListener("resize", resize)
       window.removeEventListener("mousemove", onMouseMove)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [CELL_SIZE, initCells, intensityScale, motionScale])
 
