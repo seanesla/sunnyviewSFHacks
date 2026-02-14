@@ -110,8 +110,8 @@ export function SunnyviewExperience() {
     const reduceMotion =
       window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
     setPhase("opening");
-    window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 220);
-    window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 900);
+    window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 90);
+    window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 380);
   }
 
   const [mapInput, setMapInput] = useState<MapInputResult>({
@@ -887,7 +887,7 @@ export function SunnyviewExperience() {
                     "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                     opened
                       ? opening
-                        ? "translate-x-0 opacity-100 blur-0 delay-[220ms]"
+                        ? "translate-x-0 opacity-100 blur-0 delay-[90ms]"
                         : "translate-x-0 opacity-100 blur-0 delay-0"
                       : "pointer-events-none -translate-x-10 opacity-0 blur-md delay-0",
                   )}
@@ -905,7 +905,7 @@ export function SunnyviewExperience() {
                       className={cn(
                         "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                         opening
-                          ? "translate-x-0 opacity-100 blur-0 delay-[280ms]"
+                          ? "translate-x-0 opacity-100 blur-0 delay-[130ms]"
                           : "translate-x-0 opacity-100 blur-0 delay-0",
                       )}
                     >

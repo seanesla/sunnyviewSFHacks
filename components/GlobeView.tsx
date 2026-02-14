@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import { SunnyviewLogoLoader } from "@/components/SunnyviewLogoLoader"
 import { cn } from "@/lib/utils"
 
 type CesiumModule = typeof import("cesium")
@@ -78,23 +79,29 @@ export function GlobeView({
           contextOptions: isHero ? ({ webgl: { alpha: true } } as any) : undefined,
         })
 
+        viewerRef.current = viewer
+
         // Imagery:
         // - App: prefer ion if token is present.
         // - Hero: always use Esri (keeps branding off the landing page).
         viewer.imageryLayers.removeAll()
-        try {
-          if (useIonImagery) {
-            const provider = await Cesium.createWorldImageryAsync()
-            viewer.imageryLayers.addImageryProvider(provider)
-          } else {
-            const provider = await Cesium.ArcGisMapServerImageryProvider.fromUrl(
-              "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
-            )
-            viewer.imageryLayers.addImageryProvider(provider)
+        const loadImagery = async () => {
+          try {
+            const provider = useIonImagery
+              ? await Cesium.createWorldImageryAsync()
+              : await Cesium.ArcGisMapServerImageryProvider.fromUrl(
+                  "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
+                )
+            if (cancelled) return
+            const liveViewer = viewerRef.current
+            if (!liveViewer) return
+            liveViewer.imageryLayers.removeAll()
+            liveViewer.imageryLayers.addImageryProvider(provider)
+          } catch {
+            // If imagery fails to load, keep the globe untextured.
           }
-        } catch {
-          // If imagery fails to load, keep the globe untextured.
         }
+        void loadImagery()
 
         if (isHero) {
           viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT
@@ -110,8 +117,6 @@ export function GlobeView({
           if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = true
           viewer.scene.fog.enabled = true
         }
-
-        viewerRef.current = viewer
 
         ro = new ResizeObserver(() => {
           try {
@@ -347,21 +352,15 @@ export function GlobeView({
         className
       )}
     >
-      {!ready && !error && (
+      {!error && (
         <div
           className={cn(
-            "absolute inset-0 z-10 grid place-items-center",
+            "absolute inset-0 z-10 grid place-items-center transition-opacity duration-200 ease-out motion-reduce:duration-0",
+            ready ? "pointer-events-none opacity-0" : "opacity-100",
             isHero ? "bg-transparent" : "bg-gradient-to-b from-black/10 via-black/20 to-black/40"
           )}
         >
-          <div
-            className={cn(
-              "px-3 py-2 text-xs text-muted-foreground",
-              isHero ? "rounded-full border border-border/50 bg-background/30 backdrop-blur-sm" : "rounded-lg border border-border/70 bg-background/60 backdrop-blur"
-            )}
-          >
-            Loading 3D Earth…
-          </div>
+          <SunnyviewLogoLoader />
         </div>
       )}
 
