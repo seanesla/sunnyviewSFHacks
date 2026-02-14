@@ -14,6 +14,94 @@ interface HeroSectionProps {
 export function HeroSection({ onStart, visible }: HeroSectionProps) {
   const [showAccentPicker, setShowAccentPicker] = useState(false)
   const [showLogoHint, setShowLogoHint] = useState(false)
+  const [geminiKey, setGeminiKey] = useState("")
+  const [showGeminiKey, setShowGeminiKey] = useState(false)
+  const [geminiKeyStatus, setGeminiKeyStatus] = useState<
+    | { state: "idle" }
+    | { state: "checking" }
+    | { state: "valid" }
+    | { state: "invalid"; message: string }
+  >({ state: "idle" })
+
+  useEffect(() => {
+    const k = "sunnyview-gemini-api-key-v1"
+    let cancelled = false
+    const t = window.setTimeout(() => {
+      if (cancelled) return
+      try {
+        const v = window.localStorage.getItem(k)
+        if (v) setGeminiKey(v)
+      } catch {
+        // ignore
+      }
+    }, 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [])
+
+  useEffect(() => {
+    const k = "sunnyview-gemini-api-key-v1"
+    const t = window.setTimeout(() => {
+      try {
+        if (geminiKey.trim().length === 0) window.localStorage.removeItem(k)
+        else window.localStorage.setItem(k, geminiKey)
+      } catch {
+        // ignore
+      }
+    }, 120)
+    return () => window.clearTimeout(t)
+  }, [geminiKey])
+
+  useEffect(() => {
+    const raw = geminiKey.trim()
+    const ac = new AbortController()
+    const t = window.setTimeout(async () => {
+      if (raw.length === 0) {
+        setGeminiKeyStatus({ state: "idle" })
+        return
+      }
+
+      // Basic local sanity check before hitting the network.
+      const basicOk = /^[A-Za-z0-9_\-]{20,}$/.test(raw)
+      if (!basicOk) {
+        setGeminiKeyStatus({ state: "invalid", message: "Key format looks off" })
+        return
+      }
+
+      setGeminiKeyStatus({ state: "checking" })
+      try {
+        const res = await fetch("/api/gemini-validate", {
+          method: "POST",
+          signal: ac.signal,
+          headers: {
+            "content-type": "application/json",
+            "x-gemini-api-key": raw,
+          },
+          body: JSON.stringify({}),
+        })
+        const data = (await res.json().catch(() => null)) as any
+        const ok = Boolean(data?.ok)
+        if (ok) {
+          setGeminiKeyStatus({ state: "valid" })
+          return
+        }
+        const message = typeof data?.error === "string" ? data.error : "Invalid key"
+        setGeminiKeyStatus({ state: "invalid", message })
+      } catch (e) {
+        if (ac.signal.aborted) return
+        const msg = e instanceof Error ? e.message : "Network error"
+        setGeminiKeyStatus({ state: "invalid", message: msg })
+      }
+    }, 450)
+
+    return () => {
+      ac.abort()
+      window.clearTimeout(t)
+    }
+  }, [geminiKey])
 
   useEffect(() => {
     if (!visible) {
@@ -110,6 +198,59 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         <span className="text-xs text-muted-foreground">
           or click the Earth to begin
         </span>
+      </div>
+
+      <div className="glass-card gradient-border rounded-xl p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
+            <div className="mt-1 text-xs text-muted-foreground">Stored locally in this browser (localStorage).</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className={
+                geminiKeyStatus.state === "valid"
+                  ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                  : geminiKeyStatus.state === "checking"
+                    ? "rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"
+                    : geminiKeyStatus.state === "invalid"
+                      ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
+                      : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
+              }
+            >
+              {geminiKeyStatus.state === "valid"
+                ? "Valid"
+                : geminiKeyStatus.state === "checking"
+                  ? "Checking…"
+                  : geminiKeyStatus.state === "invalid"
+                    ? "Invalid"
+                    : "Optional"}
+            </div>
+            <button
+              type="button"
+              className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+              onClick={() => setShowGeminiKey((v) => !v)}
+            >
+              {showGeminiKey ? "Hide" : "Show"}
+            </button>
+          </div>
+        </div>
+        <div className="mt-3">
+          <input
+            value={geminiKey}
+            onChange={(e) => setGeminiKey(e.target.value)}
+            type={showGeminiKey ? "text" : "password"}
+            placeholder="Paste your Gemini API key"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          />
+        </div>
+        {geminiKeyStatus.state === "invalid" ? (
+          <div className="mt-2 text-[11px] text-rose-200/90">
+            {geminiKeyStatus.message}
+          </div>
+        ) : null}
       </div>
 
       {/* preview cards */}

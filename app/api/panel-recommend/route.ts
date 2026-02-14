@@ -66,7 +66,11 @@ function tryParseJson(s: string) {
 }
 
 export async function POST(req: Request) {
-  const key = process.env.GEMINI_API_KEY?.trim() || ""
+  const body = await req.json().catch(() => ({}))
+  const headerKey = req.headers.get("x-gemini-api-key")?.trim() || ""
+  const bodyKeyRaw = (body as any)?.geminiApiKey ?? (body as any)?.apiKey
+  const bodyKey = typeof bodyKeyRaw === "string" ? bodyKeyRaw.trim() : ""
+  const key = (process.env.GEMINI_API_KEY?.trim() || headerKey || bodyKey || "").trim()
   const configuredModel = process.env.GEMINI_MODEL?.trim() || ""
   const modelsToTry = uniqueModels([
     configuredModel,
@@ -75,7 +79,6 @@ export async function POST(req: Request) {
     "gemini-2.5-pro",
   ])
 
-  const body = await req.json().catch(() => ({}))
   const parsed = BodySchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid body", issues: parsed.error.issues }, { status: 400 })
