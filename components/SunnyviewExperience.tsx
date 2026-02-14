@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { QRCodeCanvas } from "qrcode.react"
 import { HeroSection } from "@/components/hero-section"
 import { GlobeView } from "@/components/GlobeView"
@@ -61,6 +61,10 @@ export function SunnyviewExperience() {
   const globeInteractive = phase === "app"
   const [panelsMounted, setPanelsMounted] = useState(false)
 
+  const globeCardRef = useRef<HTMLDivElement | null>(null)
+  const globeFlipFromRef = useRef<DOMRect | null>(null)
+  const globeFlipPlayedRef = useRef(false)
+
   useEffect(() => {
     const t = window.setTimeout(() => setEntered(true), 30)
     return () => window.clearTimeout(t)
@@ -69,10 +73,60 @@ export function SunnyviewExperience() {
   function openApp() {
     if (phase !== "landing") return
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+
+    globeFlipFromRef.current = globeCardRef.current?.getBoundingClientRect() ?? null
+    globeFlipPlayedRef.current = false
+
     setPhase("opening")
     window.setTimeout(() => setPanelsMounted(true), reduceMotion ? 0 : 120)
     window.setTimeout(() => setPhase("app"), reduceMotion ? 0 : 950)
   }
+
+  useLayoutEffect(() => {
+    if (phase !== "opening") return
+    if (globeFlipPlayedRef.current) return
+
+    const from = globeFlipFromRef.current
+    const el = globeCardRef.current
+    if (!from || !el) return
+
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+    if (reduceMotion) return
+
+    const to = el.getBoundingClientRect()
+    if (!to.width || !to.height) return
+
+    const dx = from.left - to.left
+    const dy = from.top - to.top
+    const sx = from.width / to.width
+    const sy = from.height / to.height
+
+    // If the delta is tiny, don't bother animating.
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(1 - sx) < 0.01 && Math.abs(1 - sy) < 0.01) {
+      globeFlipPlayedRef.current = true
+      return
+    }
+
+    globeFlipPlayedRef.current = true
+    const anim = el.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` },
+        { transform: "translate(0px, 0px) scale(1, 1)" },
+      ],
+      {
+        duration: 980,
+        easing: "cubic-bezier(0.2,0.85,0.2,1)",
+        fill: "both",
+      }
+    )
+    anim.onfinish = () => {
+      try {
+        el.style.transform = ""
+      } catch {
+        // ignore
+      }
+    }
+  }, [phase])
 
   const [mapInput, setMapInput] = useState<MapInputResult>({
     kind: "address",
@@ -617,17 +671,24 @@ export function SunnyviewExperience() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1000px_700px_at_12%_18%,oklch(0.72_0.18_var(--accent-hue)_/_0.16),transparent_60%),radial-gradient(900px_650px_at_84%_26%,oklch(0.68_0.16_calc(var(--accent-hue)+50)_/_0.12),transparent_62%),radial-gradient(800px_520px_at_55%_88%,oklch(0.6_0.14_calc(var(--accent-hue)-70)_/_0.10),transparent_60%)]" />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/0 via-black/10 to-black/55" />
 
-      <div className="relative mx-auto h-full max-w-7xl px-6 py-10">
+      <div className="relative mx-auto h-full max-w-screen-2xl px-5 py-8 sm:px-6 sm:py-10 lg:px-8">
         <div className="grid h-full grid-rows-[1fr]">
-          <div className="grid h-full grid-cols-1 gap-6 lg:grid-cols-[minmax(320px,1fr)_minmax(460px,700px)_minmax(320px,1fr)]">
+          <div
+            className={cn(
+              "grid h-full grid-cols-1 gap-6",
+              opened
+                ? "lg:grid-cols-[minmax(360px,440px)_minmax(520px,1fr)_minmax(360px,440px)]"
+                : "lg:grid-cols-[minmax(380px,520px)_minmax(560px,1fr)]"
+            )}
+          >
             <aside
               className={cn(
-                "min-h-0",
+                "relative min-h-0",
                 "transition-[opacity,transform,filter] duration-[1100ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                 opened ? "opacity-100 blur-0" : "opacity-100 blur-0"
               )}
             >
-              <div className="h-full min-h-0 overflow-auto pr-1">
+              <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1">
                 <div
                   className={cn(
                     "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
@@ -636,25 +697,27 @@ export function SunnyviewExperience() {
                 >
                   <HeroSection onStart={openApp} visible={entered && !opened} />
                 </div>
+              </div>
 
-                <div
-                  className={cn(
-                    "transition-[opacity,transform,filter] duration-[900ms] delay-150 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                    opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 -translate-x-10 blur-md pointer-events-none"
-                  )}
-                >
-                  {panelsMounted ? leftPanel : null}
-                </div>
+              <div
+                className={cn(
+                  "absolute inset-0 h-full min-h-0 overflow-auto pr-1",
+                  "transition-[opacity,transform,filter] duration-[900ms] delay-150 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 -translate-x-10 blur-md pointer-events-none"
+                )}
+              >
+                {panelsMounted ? leftPanel : null}
               </div>
             </aside>
 
             <section className="min-h-0">
               <div
+                ref={globeCardRef}
                 className={cn(
-                  "relative h-[min(520px,56vh)] w-full transform-gpu rounded-2xl border border-border/60 bg-card/10 backdrop-blur-sm lg:h-[min(760px,82vh)]",
-                  "transition-[transform,filter] duration-[1200ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                  "relative h-[min(560px,62vh)] w-full rounded-2xl border border-border/60 bg-card/10 backdrop-blur-sm lg:h-[min(820px,84vh)]",
+                  "transition-[opacity,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                   entered ? "opacity-100" : "opacity-0",
-                  opened ? "lg:translate-x-0 lg:scale-100" : "lg:translate-x-[18%] lg:scale-[0.98]"
+                  opened ? "blur-0" : "blur-0"
                 )}
                 style={{ willChange: "transform" }}
               >
@@ -680,18 +743,20 @@ export function SunnyviewExperience() {
               </div>
             </section>
 
-            <aside className="min-h-0">
-              <div className="h-full min-h-0 overflow-auto pl-1">
-                <div
-                  className={cn(
-                    "transition-[opacity,transform,filter] duration-[900ms] delay-100 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
-                    opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 translate-x-10 blur-md pointer-events-none"
-                  )}
-                >
-                  {panelsMounted ? rightPanel : null}
+            {opened ? (
+              <aside className="min-h-0">
+                <div className="h-full min-h-0 overflow-auto pl-1">
+                  <div
+                    className={cn(
+                      "transition-[opacity,transform,filter] duration-[900ms] delay-100 ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
+                      opened ? "opacity-100 translate-x-0 blur-0" : "opacity-0 translate-x-10 blur-md pointer-events-none"
+                    )}
+                  >
+                    {panelsMounted ? rightPanel : null}
+                  </div>
                 </div>
-              </div>
-            </aside>
+              </aside>
+            ) : null}
           </div>
         </div>
       </div>
