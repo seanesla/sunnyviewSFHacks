@@ -131,6 +131,10 @@ export function RoofCanvas({
   const drawRef = useRef<() => void>(() => {})
   const invalidateRef = useRef<() => void>(() => {})
   const drawRafRef = useRef<number | null>(null)
+  const viewRef = useRef<{ zoom: number; panX: number; panY: number }>({ zoom: 1, panX: 0, panY: 0 })
+  const [viewUi, setViewUi] = useState<{ zoom: number }>({ zoom: 1 })
+  const panDragRef = useRef<{ pointerId: number; startClientX: number; startClientY: number; startPanX: number; startPanY: number } | null>(null)
+  const candidateDownRef = useRef<string | null>(null)
   const canvasMetricsRef = useRef<{ width: number; height: number; dpr: number }>({
     width: 0,
     height: 0,
@@ -163,12 +167,44 @@ export function RoofCanvas({
     return { w: 1024, h: 640 }
   }, [background.kind, imageHeight, imageWidth])
 
-  const toScreen = useCallback(
-    (p: Point, rect: DOMRect) => {
-      const scale = Math.min(rect.width / internalSize.w, rect.height / internalSize.h)
-      const offX = (rect.width - internalSize.w * scale) / 2
-      const offY = (rect.height - internalSize.h * scale) / 2
-      return { x: offX + p.x * scale, y: offY + p.y * scale, scale, offX, offY }
+  const clampViewToBounds = useCallback(
+    (next: { zoom: number; panX: number; panY: number }) => {
+      const container = containerRef.current
+      if (!container) return next
+
+      const rect = container.getBoundingClientRect()
+      const baseScale = Math.min(rect.width / internalSize.w, rect.height / internalSize.h)
+      const z = Math.max(1, next.zoom)
+      const viewportW = rect.width / (baseScale * z)
+      const viewportH = rect.height / (baseScale * z)
+
+      const cx = internalSize.w / 2
+      const cy = internalSize.h / 2
+
+      let panX = next.panX
+      let panY = next.panY
+
+      if (viewportW >= internalSize.w) {
+        panX = 0
+      } else {
+        const minCenterX = viewportW / 2
+        const maxCenterX = internalSize.w - viewportW / 2
+        const viewCenterX = cx - panX
+        const clampedCenterX = clamp(viewCenterX, minCenterX, maxCenterX)
+        panX = cx - clampedCenterX
+      }
+
+      if (viewportH >= internalSize.h) {
+        panY = 0
+      } else {
+        const minCenterY = viewportH / 2
+        const maxCenterY = internalSize.h - viewportH / 2
+        const viewCenterY = cy - panY
+        const clampedCenterY = clamp(viewCenterY, minCenterY, maxCenterY)
+        panY = cy - clampedCenterY
+      }
+
+      return { zoom: z, panX, panY }
     },
     [internalSize.h, internalSize.w]
   )
@@ -178,9 +214,22 @@ export function RoofCanvas({
       const scale = Math.min(rect.width / internalSize.w, rect.height / internalSize.h)
       const offX = (rect.width - internalSize.w * scale) / 2
       const offY = (rect.height - internalSize.h * scale) / 2
-      const ix = (x - offX) / scale
-      const iy = (y - offY) / scale
-      return { x: clamp(ix, 0, internalSize.w), y: clamp(iy, 0, internalSize.h), scale, offX, offY }
+      const qx = (x - offX) / scale
+      const qy = (y - offY) / scale
+
+      const { zoom, panX, panY } = viewRef.current
+      const cx = internalSize.w / 2
+      const cy = internalSize.h / 2
+      const ix = cx + (qx - cx) / zoom - panX
+      const iy = cy + (qy - cy) / zoom - panY
+      return {
+        x: clamp(ix, 0, internalSize.w),
+        y: clamp(iy, 0, internalSize.h),
+        scale: scale * zoom,
+        offX,
+        offY,
+        baseScale: scale,
+      }
     },
     [internalSize.h, internalSize.w]
   )
@@ -222,6 +271,8 @@ export function RoofCanvas({
     const scale = Math.min(rect.width / internalSize.w, rect.height / internalSize.h)
     const offX = (rect.width - internalSize.w * scale) / 2
     const offY = (rect.height - internalSize.h * scale) / 2
+    const { zoom: viewZoom, panX: viewPanX, panY: viewPanY } = viewRef.current
+    const uiScale = 1 / Math.max(1, viewZoom)
 
     // Background
     ctx.fillStyle = "rgba(0,0,0,0.35)"
@@ -229,6 +280,12 @@ export function RoofCanvas({
     ctx.save()
     ctx.translate(offX, offY)
     ctx.scale(scale, scale)
+    // View transform (zoom/pan) in internal coordinates.
+    const vCx = internalSize.w / 2
+    const vCy = internalSize.h / 2
+    ctx.translate(vCx, vCy)
+    ctx.scale(viewZoom, viewZoom)
+    ctx.translate(viewPanX - vCx, viewPanY - vCy)
 
     if (background.kind === "image") {
       const img = imgRef.current
@@ -296,7 +353,7 @@ export function RoofCanvas({
 
     // subtle grid
     ctx.strokeStyle = "rgba(255,255,255,0.05)"
-    ctx.lineWidth = 1
+    ctx.lineWidth = 1 * uiScale
     for (let x = 0; x <= internalSize.w; x += 64) {
       ctx.beginPath()
       ctx.moveTo(x, 0)
@@ -321,7 +378,7 @@ export function RoofCanvas({
         ctx.translate(-p.widthPx / 2, -p.heightPx / 2)
         ctx.fillStyle = "rgba(245, 158, 11, 0.22)"
         ctx.strokeStyle = "rgba(245, 158, 11, 0.7)"
-        ctx.lineWidth = 1
+        ctx.lineWidth = 1 * uiScale
         ctx.fillRect(0, 0, p.widthPx, p.heightPx)
         ctx.strokeRect(0, 0, p.widthPx, p.heightPx)
         ctx.restore()
@@ -337,7 +394,7 @@ export function RoofCanvas({
       if (closed) ctx.closePath()
 
       ctx.strokeStyle = "rgba(59, 130, 246, 0.95)"
-      ctx.lineWidth = 2
+      ctx.lineWidth = 2 * uiScale
       ctx.stroke()
       if (closed) {
         ctx.fillStyle = "rgba(59, 130, 246, 0.08)"
@@ -348,11 +405,11 @@ export function RoofCanvas({
         for (let i = 0; i < vertices.length; i++) {
           const v = vertices[i]
           ctx.beginPath()
-          ctx.arc(v.x, v.y, hoverIdx === i ? 7 : 5, 0, Math.PI * 2)
+          ctx.arc(v.x, v.y, (hoverIdx === i ? 7 : 5) * uiScale, 0, Math.PI * 2)
           ctx.fillStyle = hoverIdx === i ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.8)"
           ctx.fill()
           ctx.strokeStyle = "rgba(0,0,0,0.65)"
-          ctx.lineWidth = 2
+          ctx.lineWidth = 2 * uiScale
           ctx.stroke()
         }
       }
@@ -380,9 +437,9 @@ export function RoofCanvas({
 
       if (w > 1 && h > 1) {
         ctx.save()
-        ctx.setLineDash([8, 6])
+        ctx.setLineDash([8 * uiScale, 6 * uiScale])
         ctx.strokeStyle = "rgba(59, 130, 246, 0.95)"
-        ctx.lineWidth = 2
+        ctx.lineWidth = 2 * uiScale
         ctx.strokeRect(minX, minY, w, h)
         ctx.restore()
 
@@ -399,7 +456,7 @@ export function RoofCanvas({
       ctx.translate(cx, cy)
       ctx.rotate((orientationDeg * Math.PI) / 180)
       ctx.strokeStyle = "rgba(255,255,255,0.25)"
-      ctx.lineWidth = 2
+      ctx.lineWidth = 2 * uiScale
       ctx.beginPath()
       ctx.moveTo(-60, 0)
       ctx.lineTo(60, 0)
@@ -407,21 +464,21 @@ export function RoofCanvas({
       ctx.restore()
     }
 
-    ctx.restore()
-
     // Center pin (address point)
     if (centerPin) {
       ctx.save()
       ctx.strokeStyle = "rgba(255,255,255,0.85)"
-      ctx.lineWidth = 2
+      ctx.lineWidth = 2 * uiScale
       ctx.beginPath()
-      ctx.moveTo(centerPin.x - 10, centerPin.y)
-      ctx.lineTo(centerPin.x + 10, centerPin.y)
-      ctx.moveTo(centerPin.x, centerPin.y - 10)
-      ctx.lineTo(centerPin.x, centerPin.y + 10)
+      ctx.moveTo(centerPin.x - 10 * uiScale, centerPin.y)
+      ctx.lineTo(centerPin.x + 10 * uiScale, centerPin.y)
+      ctx.moveTo(centerPin.x, centerPin.y - 10 * uiScale)
+      ctx.lineTo(centerPin.x, centerPin.y + 10 * uiScale)
       ctx.stroke()
       ctx.restore()
     }
+
+    ctx.restore()
 
     // Candidate outlines (disambiguation)
     if (mode === "edit" && candidatePolygons && candidatePolygons.length > 0) {
@@ -441,7 +498,7 @@ export function RoofCanvas({
         for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y)
         ctx.closePath()
         ctx.strokeStyle = colors[idx % colors.length]
-        ctx.lineWidth = 2
+        ctx.lineWidth = 2 * uiScale
         ctx.stroke()
         ctx.fillStyle = "rgba(0,0,0,0.16)"
         ctx.fill()
@@ -592,28 +649,89 @@ export function RoofCanvas({
     }
   }, [])
 
+  const setView = useCallback(
+    (next: { zoom: number; panX: number; panY: number }) => {
+      const clamped = clampViewToBounds({
+        zoom: clamp(next.zoom, 1, 8),
+        panX: next.panX,
+        panY: next.panY,
+      })
+      viewRef.current = clamped
+      setViewUi((prev) => (prev.zoom === clamped.zoom ? prev : { zoom: clamped.zoom }))
+      invalidate()
+    },
+    [clampViewToBounds, invalidate]
+  )
+
+  const zoomBy = useCallback(
+    (factor: number, focus: Point | null) => {
+      const { zoom, panX, panY } = viewRef.current
+      const nextZoom = clamp(zoom * factor, 1, 8)
+      if (Math.abs(nextZoom - zoom) < 1e-6) return
+
+      if (!focus) {
+        setView({ zoom: nextZoom, panX, panY })
+        return
+      }
+
+      const cx = internalSize.w / 2
+      const cy = internalSize.h / 2
+      const fx = focus.x
+      const fy = focus.y
+
+      // Keep focus point fixed in screen space.
+      const ratio = zoom / nextZoom
+      const nextPanX = cx + ratio * (fx + panX - cx) - fx
+      const nextPanY = cy + ratio * (fy + panY - cy) - fy
+      setView({ zoom: nextZoom, panX: nextPanX, panY: nextPanY })
+    },
+    [internalSize.h, internalSize.w, setView]
+  )
+
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      const container = containerRef.current
+      if (!container) return
+
+      // Prevent page scroll when the user is interacting with the canvas.
+      e.preventDefault()
+
+      const rect = container.getBoundingClientRect()
+      const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
+
+      const delta = e.deltaY
+      const factor = Math.exp(-delta * 0.0014)
+      zoomBy(factor, { x: internal.x, y: internal.y })
+    },
+    [toInternal, zoomBy]
+  )
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (mode !== "edit") return
       const canvas = canvasRef.current
       const container = containerRef.current
       if (!canvas || !container) return
       canvas.setPointerCapture(e.pointerId)
+
+      if (mode !== "edit") {
+        const { panX, panY } = viewRef.current
+        panDragRef.current = {
+          pointerId: e.pointerId,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startPanX: panX,
+          startPanY: panY,
+        }
+        return
+      }
+
       const rect = container.getBoundingClientRect()
       const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
 
       movedRef.current = false
       downPosRef.current = { x: internal.x, y: internal.y }
       downVertexIdxRef.current = null
-
-      if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
-        for (const c of candidatePolygons) {
-          if (pointInPolygon(internal, c.polygon)) {
-            onPickCandidate(c.id)
-            return
-          }
-        }
-      }
+      candidateDownRef.current = null
 
       if (tool === "rectangle") {
         setDrawingRect(true)
@@ -624,37 +742,54 @@ export function RoofCanvas({
         return
       }
 
-      if (closed) {
-        const idx = nearestVertexIdx(internal, vertices, 12 / internal.scale)
-        if (idx !== null) {
-          downVertexIdxRef.current = idx
-          setDraggingIdx(idx)
-          return
-        }
-
-        // Add a "breakpoint" by inserting a new vertex on the nearest edge.
-        if (tool === "polygon") {
-          const edge = nearestEdgeInsertIdx(internal, vertices, 10 / internal.scale)
-          if (edge) {
-            const next = vertices.slice()
-            next.splice(edge.insertIdx, 0, edge.point)
-            onVerticesChange?.(next)
-            setDraggingIdx(edge.insertIdx)
-            return
-          }
-        }
+      const idx = vertices.length > 0 ? nearestVertexIdx(internal, vertices, 12 / internal.scale) : null
+      if (idx !== null) {
+        downVertexIdxRef.current = idx
+        setDraggingIdx(idx)
         return
       }
 
-      onVerticesChange?.([...vertices, { x: internal.x, y: internal.y }])
+      if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
+        for (const c of candidatePolygons) {
+          if (pointInPolygon(internal, c.polygon)) {
+            candidateDownRef.current = c.id
+            break
+          }
+        }
+      }
+
+      // Default interaction: drag to pan the view (mask does not change).
+      const { panX, panY } = viewRef.current
+      panDragRef.current = {
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startPanX: panX,
+        startPanY: panY,
+      }
     },
-    [candidatePolygons, closed, mode, onClosedChange, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
+    [candidatePolygons, mode, onClosedChange, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
   )
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       const container = containerRef.current
       if (!container) return
+
+      const panDrag = panDragRef.current
+      if (panDrag && panDrag.pointerId === e.pointerId) {
+        const rect = container.getBoundingClientRect()
+        const baseScale = Math.min(rect.width / internalSize.w, rect.height / internalSize.h)
+        const z = Math.max(1, viewRef.current.zoom)
+        const dx = e.clientX - panDrag.startClientX
+        const dy = e.clientY - panDrag.startClientY
+        if (!movedRef.current && dx * dx + dy * dy > 9) movedRef.current = true
+        const nextPanX = panDrag.startPanX + dx / (baseScale * z)
+        const nextPanY = panDrag.startPanY + dy / (baseScale * z)
+        setView({ zoom: z, panX: nextPanX, panY: nextPanY })
+        return
+      }
+
       const rect = container.getBoundingClientRect()
       const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
 
@@ -664,7 +799,7 @@ export function RoofCanvas({
         if (dx * dx + dy * dy > 9) movedRef.current = true
       }
 
-      if (mode === "edit" && closed) {
+      if (mode === "edit" && vertices.length > 0) {
         const idx = nearestVertexIdx(internal, vertices, 12 / internal.scale)
         setHoverIdx((prev) => (prev === idx ? prev : idx))
       } else {
@@ -683,13 +818,17 @@ export function RoofCanvas({
       next[draggingIdx] = { x: internal.x, y: internal.y }
       onVerticesChange?.(next)
     },
-    [closed, draggingIdx, drawingRect, mode, onVerticesChange, toInternal, tool, vertices]
+    [draggingIdx, drawingRect, internalSize.h, internalSize.w, mode, onVerticesChange, setView, toInternal, tool, vertices]
   )
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
       const canvas = canvasRef.current
       if (canvas) canvas.releasePointerCapture(e.pointerId)
+
+      if (panDragRef.current?.pointerId === e.pointerId) {
+        panDragRef.current = null
+      }
 
       if (mode === "edit" && tool === "rectangle" && drawingRect && rectStart && rectEnd) {
         const minX = Math.min(rectStart.x, rectEnd.x)
@@ -714,6 +853,11 @@ export function RoofCanvas({
       setRectStart(null)
       setRectEnd(null)
       setDraggingIdx(null)
+
+      if (mode === "edit" && candidateDownRef.current && !movedRef.current && onPickCandidate) {
+        onPickCandidate(candidateDownRef.current)
+      }
+      candidateDownRef.current = null
 
       // Triple-click a vertex to delete it.
       if (mode === "edit" && closed && tool === "polygon") {
@@ -741,15 +885,58 @@ export function RoofCanvas({
       downPosRef.current = null
       movedRef.current = false
     },
-    [closed, drawingRect, mode, onClosedChange, onVerticesChange, rectEnd, rectStart, tool, vertices]
+    [closed, drawingRect, mode, onClosedChange, onPickCandidate, onVerticesChange, rectEnd, rectStart, tool, vertices]
   )
 
-  const onDoubleClick = useCallback(() => {
-    if (mode !== "edit") return
-    if (closed) return
-    if (vertices.length < 3) return
-    onClosedChange?.(true)
-  }, [closed, mode, onClosedChange, vertices.length])
+  const onDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (mode !== "edit") return
+      if (tool === "rectangle") return
+      const container = containerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
+
+      // Double-click adds points; ignore if user is hitting an existing vertex
+      // (triple-click delete uses vertex clicks).
+      const hitVertex = vertices.length > 0 ? nearestVertexIdx(internal, vertices, 12 / internal.scale) : null
+      if (hitVertex !== null) return
+
+      if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
+        for (const c of candidatePolygons) {
+          if (pointInPolygon(internal, c.polygon)) {
+            onPickCandidate(c.id)
+            return
+          }
+        }
+      }
+
+      if (closed && vertices.length >= 2) {
+        // Insert into the nearest edge to keep ordering stable.
+        let bestI = 0
+        let bestD = Infinity
+        const n = vertices.length
+        for (let i = 0; i < n; i++) {
+          const a = vertices[i]
+          const b = vertices[(i + 1) % n]
+          const hit = distPointToSegment(internal, a, b)
+          if (hit.d < bestD) {
+            bestD = hit.d
+            bestI = i
+          }
+        }
+        const insertIdx = (bestI + 1) % n
+        const next = vertices.slice()
+        next.splice(insertIdx === 0 ? n : insertIdx, 0, { x: internal.x, y: internal.y })
+        onVerticesChange?.(next)
+        return
+      }
+
+      // Unclosed polygon: double-click adds a new point.
+      onVerticesChange?.([...vertices, { x: internal.x, y: internal.y }])
+    },
+    [candidatePolygons, closed, mode, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
+  )
 
   return (
     <div className="space-y-2">
@@ -757,7 +944,7 @@ export function RoofCanvas({
         <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs text-muted-foreground">
               {background.kind === "image"
-                ? "Satellite image: trace the usable roof area. Tip: triple-click a dot to delete it."
+                ? "Tip: drag to pan, scroll/trackpad to zoom. Double-click to add a point. Drag a point to move it. Triple-click to delete."
                 : background.kind === "osm"
                   ? "Map mode: OSM background."
                   : "Trace the usable roof polygon."}
@@ -814,6 +1001,36 @@ export function RoofCanvas({
             >
               Clear
             </button>
+
+            <div className="flex items-center gap-1 rounded-md bg-secondary/60 px-1.5 py-1">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[11px] font-semibold text-secondary-foreground hover:bg-secondary/80"
+                onClick={() => zoomBy(1 / 1.18, null)}
+                title="Zoom out"
+              >
+                −
+              </button>
+              <div className="min-w-[54px] text-center text-[11px] font-medium text-secondary-foreground">
+                {Math.round(viewUi.zoom * 100)}%
+              </div>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[11px] font-semibold text-secondary-foreground hover:bg-secondary/80"
+                onClick={() => zoomBy(1.18, null)}
+                title="Zoom in"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+                onClick={() => setView({ zoom: 1, panX: 0, panY: 0 })}
+                title="Reset view"
+              >
+                Reset
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -821,11 +1038,13 @@ export function RoofCanvas({
       <div ref={containerRef} className="glass-surface relative h-[340px] w-full overflow-hidden rounded-xl sm:h-[440px] lg:h-[520px]">
         <canvas
           ref={canvasRef}
-          className={`absolute inset-0 h-full w-full ${mode === "edit" ? "cursor-crosshair" : "cursor-default"}`}
+          className={`absolute inset-0 h-full w-full touch-none ${mode === "edit" ? "cursor-crosshair" : "cursor-default"}`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onDoubleClick={onDoubleClick}
+          onWheel={onWheel}
+          onContextMenu={(e) => e.preventDefault()}
         />
         {background.kind === "image" && imageError?.src === imageSrc && (
           <div className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-rose-300/35 bg-rose-500/15 px-3 py-2 text-[11px] text-rose-100 backdrop-blur">

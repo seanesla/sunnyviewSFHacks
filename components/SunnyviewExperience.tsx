@@ -492,9 +492,19 @@ export function SunnyviewExperience() {
           panelSpecMode,
         });
 
+        let geminiKey = "";
+        try {
+          geminiKey = String(window.localStorage.getItem("sunnyview-gemini-api-key-v1") ?? "").trim();
+        } catch {
+          geminiKey = "";
+        }
+
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (geminiKey) headers["x-gemini-api-key"] = geminiKey;
+
         const res = await fetch(apiUrl("/api/panel-recommend"), {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers,
           signal: ac.signal,
           body: JSON.stringify({
             lat,
@@ -510,12 +520,19 @@ export function SunnyviewExperience() {
         if (!res.ok) {
           const message =
             typeof data?.error === "string" ? data.error : `Panel recommendation failed (${res.status})`;
-          console.warn("[panel-recommend] client non-200", {
-            status: res.status,
-            message,
-            attemptedModels: Array.isArray(data?.attemptedModels) ? data.attemptedModels : undefined,
-          });
-          throw new Error(message);
+          const normalized =
+            message.includes("Missing GEMINI_API_KEY") || message.includes("Missing Gemini API key")
+              ? "Missing Gemini API key. Add it on the landing page."
+              : message;
+          const isMissingKey = normalized.toLowerCase().includes("missing gemini api key");
+          if (!isMissingKey) {
+            console.warn("[panel-recommend] client non-200", {
+              status: res.status,
+              message: normalized,
+              attemptedModels: Array.isArray(data?.attemptedModels) ? data.attemptedModels : undefined,
+            });
+          }
+          throw new Error(normalized);
         }
 
         const selectedId = typeof data?.selectedId === "string" ? data.selectedId : null;
@@ -557,10 +574,10 @@ export function SunnyviewExperience() {
         }
       } catch (e) {
         if (ac.signal.aborted) return;
-        console.error("[panel-recommend] client error", {
-          message: e instanceof Error ? e.message : "Panel recommendation failed.",
-        });
-        setPanelBrandError(e instanceof Error ? e.message : "Panel recommendation failed.");
+        const msg = e instanceof Error ? e.message : "Panel recommendation failed.";
+        // Treat Gemini failures as user-facing state (not a console error).
+        // Console errors trigger the Next.js dev overlay and look like crashes.
+        setPanelBrandError(msg);
       } finally {
         if (!ac.signal.aborted) setPanelBrandBusy(false);
       }
@@ -1268,6 +1285,11 @@ export function SunnyviewExperience() {
       </div>
 
       <RoofCanvas
+        key={
+          background.kind === "image"
+            ? `img:${background.src}:${background.widthPx}x${background.heightPx}`
+            : background.kind
+        }
         background={background}
         mPerPx={mPerPx}
         orientationDeg={orientationDeg}
