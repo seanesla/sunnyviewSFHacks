@@ -5,6 +5,7 @@ import { QRCodeCanvas } from "qrcode.react"
 import { HeroSection } from "@/components/hero-section"
 import { GlobeView } from "@/components/GlobeView"
 import { MapInput, type MapInputResult } from "@/components/MapInput"
+import { StaticMapPhoto } from "@/components/StaticMapPhoto"
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking"
 import { packPanelsDeterministic } from "@/components/PanelPacking"
 import { RoofCanvas } from "@/components/RoofCanvas"
@@ -564,6 +565,14 @@ export function SunnyviewExperience() {
 
   const rightPanel = (
     <div className="space-y-4">
+      <StaticMapPhoto
+        className="rounded-xl border border-border bg-card/40 p-4 backdrop-blur-sm"
+        address={mapInput.kind === "address" ? mapInput.address : null}
+        lat={lat}
+        lng={lng}
+        zoom={zoom}
+      />
+
       <div className="rounded-xl border border-border bg-card/40 p-4 backdrop-blur-sm">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-foreground">Results</div>
