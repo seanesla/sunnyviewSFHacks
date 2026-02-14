@@ -1,10 +1,46 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { SunnyviewLogoLoader } from "@/components/SunnyviewLogoLoader"
+import { useAccent } from "@/lib/accent-context"
 import { cn } from "@/lib/utils"
 
 type CesiumModule = typeof import("cesium")
+
+function createOrbitParticleSprite(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas")
+  canvas.width = 80
+  canvas.height = 80
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return canvas
+
+  const center = canvas.width / 2
+  const gradOuter = ctx.createRadialGradient(center, center, 0, center, center, center)
+  gradOuter.addColorStop(0, "rgba(255,255,255,1)")
+  gradOuter.addColorStop(0.22, "rgba(255,255,255,0.95)")
+  gradOuter.addColorStop(0.52, "rgba(255,255,255,0.42)")
+  gradOuter.addColorStop(1, "rgba(255,255,255,0)")
+
+  ctx.fillStyle = gradOuter
+  ctx.beginPath()
+  ctx.arc(center, center, center, 0, Math.PI * 2)
+  ctx.fill()
+
+  const gradCore = ctx.createRadialGradient(center, center, 0, center, center, center * 0.34)
+  gradCore.addColorStop(0, "rgba(255,255,255,1)")
+  gradCore.addColorStop(1, "rgba(255,255,255,0)")
+
+  ctx.fillStyle = gradCore
+  ctx.beginPath()
+  ctx.arc(center, center, center * 0.36, 0, Math.PI * 2)
+  ctx.fill()
+
+  return canvas
+}
+
+function isFiniteCartesian3(value: import("cesium").Cartesian3): boolean {
+  return Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.z)
+}
 
 export function GlobeView({
   lat,
@@ -28,12 +64,20 @@ export function GlobeView({
   onReadyChange?: (ready: boolean) => void
 }) {
   const isHero = variant === "hero"
+  const { hue, saturation } = useAccent()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<import("cesium").Viewer | null>(null)
   const markerEntityRef = useRef<import("cesium").Entity | null>(null)
   const clickSpinRafRef = useRef<number | null>(null)
   const landingSpinRafRef = useRef<number | null>(null)
   const landingSpinLastNowRef = useRef<number | null>(null)
+  const orbitBillboardCollectionRef = useRef<import("cesium").BillboardCollection | null>(null)
+  const orbitHeadBillboardRef = useRef<import("cesium").Billboard | null>(null)
+  const orbitTrailCoreEntityRef = useRef<import("cesium").Entity | null>(null)
+  const orbitTrailGlowEntityRef = useRef<import("cesium").Entity | null>(null)
+  const orbitTrailPositionsRef = useRef<import("cesium").Cartesian3[]>([])
+  const orbitRafRef = useRef<number | null>(null)
+  const orbitLastNowRef = useRef<number | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -45,11 +89,62 @@ export function GlobeView({
     return `${(lat as number).toFixed(5)}, ${(lng as number).toFixed(5)}`
   }, [hasLocation, lat, lng])
 
+  const clearLandingOrbit = useCallback((viewerArg?: import("cesium").Viewer | null) => {
+    if (orbitRafRef.current !== null) {
+      window.cancelAnimationFrame(orbitRafRef.current)
+      orbitRafRef.current = null
+    }
+    orbitLastNowRef.current = null
+
+    const billboardCollection = orbitBillboardCollectionRef.current
+    orbitBillboardCollectionRef.current = null
+    orbitHeadBillboardRef.current = null
+
+    const trailCoreEntity = orbitTrailCoreEntityRef.current
+    orbitTrailCoreEntityRef.current = null
+    const trailGlowEntity = orbitTrailGlowEntityRef.current
+    orbitTrailGlowEntityRef.current = null
+
+    const viewer = viewerArg ?? viewerRef.current
+    if (!viewer) return
+
+    if (billboardCollection) {
+      try {
+        viewer.scene.primitives.remove(billboardCollection)
+      } catch {
+        // ignore
+      }
+    }
+
+    if (trailCoreEntity) {
+      try {
+        viewer.entities.remove(trailCoreEntity)
+      } catch {
+        // ignore
+      }
+    }
+
+    if (trailGlowEntity) {
+      try {
+        viewer.entities.remove(trailGlowEntity)
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      viewer.scene.requestRender()
+    } catch {
+      // ignore
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     let ro: ResizeObserver | null = null
     let startupRaf: number | null = null
     let startupTimer: number | null = null
+    let renderErrorListener: ((scene: unknown, error: unknown) => void) | null = null
     setReady(false)
     setError(null)
     onReadyChange?.(false)
@@ -108,6 +203,31 @@ export function GlobeView({
         })
 
         viewerRef.current = viewer
+        renderErrorListener = (_scene, renderErr) => {
+          if (cancelled) return
+
+          const message = renderErr instanceof Error ? renderErr.message : String(renderErr ?? "")
+          if (message.includes("normalized result is not a number")) {
+            clearLandingOrbit(viewer)
+            try {
+              viewer.scene.requestRender()
+            } catch {
+              // ignore
+            }
+            return
+          }
+
+          if (message.length > 0) {
+            setError(message)
+          }
+          onReadyChange?.(true)
+        }
+        try {
+          viewer.scene.renderError.addEventListener(renderErrorListener)
+        } catch {
+          renderErrorListener = null
+        }
+
         viewer.useBrowserRecommendedResolution = true
         if (isHero) {
           viewer.resolutionScale = 0.9
@@ -260,6 +380,15 @@ export function GlobeView({
         landingSpinLastNowRef.current = null
       }
       const v = viewerRef.current
+      if (v && renderErrorListener) {
+        try {
+          v.scene.renderError.removeEventListener(renderErrorListener)
+        } catch {
+          // ignore
+        }
+      }
+      renderErrorListener = null
+      clearLandingOrbit(v)
       viewerRef.current = null
       markerEntityRef.current = null
       try {
@@ -268,7 +397,7 @@ export function GlobeView({
         // ignore
       }
     }
-  }, [isHero, onReadyChange])
+  }, [clearLandingOrbit, isHero, onReadyChange])
 
   useEffect(() => {
     if (!ready) return
@@ -337,6 +466,278 @@ export function GlobeView({
       landingSpinLastNowRef.current = null
     }
   }, [landingActive, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    if (!isHero) return
+
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    let cancelled = false
+    clearLandingOrbit(viewer)
+
+    if (!landingActive) return
+
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+
+    ;(async () => {
+      const Cesium: CesiumModule = await import("cesium")
+      if (cancelled) return
+
+      const liveViewer = viewerRef.current
+      if (!liveViewer) return
+
+      const normalizedHue = ((((hue % 360) + 360) % 360) / 360)
+      const normalizedSat = Math.max(0, Math.min(1, saturation * 3.6))
+      const accent = Cesium.Color.fromHsl(normalizedHue, normalizedSat, 0.62)
+      const headColor = accent.withAlpha(0.98)
+      const trailCoreColor = accent.withAlpha(0.46)
+      const trailGlowColor = accent.withAlpha(0.16)
+      const sprite = createOrbitParticleSprite()
+
+      const billboards = liveViewer.scene.primitives.add(new Cesium.BillboardCollection())
+      orbitBillboardCollectionRef.current = billboards
+      const orbitHead = billboards.add({
+        image: sprite,
+        color: headColor,
+        scale: 0.8,
+      })
+      orbitHeadBillboardRef.current = orbitHead
+
+      const ellipsoid = liveViewer.scene.globe.ellipsoid
+      const orbitRadius = ellipsoid.maximumRadius * 1.06
+      const orbitPlaneTiltRad = Cesium.Math.toRadians(82)
+      const orbitPlanePrecessionRadPerSec = Cesium.Math.toRadians(28)
+      const trailPointCount = 64
+      const speedRadPerSec = Cesium.Math.toRadians(96)
+
+      const orbitNormalScratch = new Cesium.Cartesian3()
+      const orbitBasisUScratch = new Cesium.Cartesian3()
+      const orbitBasisVScratch = new Cesium.Cartesian3()
+      const orbitPrecessionDirScratch = new Cesium.Cartesian3()
+      const axisScratch = new Cesium.Cartesian3()
+
+      let angle = Cesium.Math.toRadians(18)
+      let planePrecessionAngle = Cesium.Math.toRadians(20)
+
+      const computeOrbitBasis = (precessionAngleRad: number) => {
+        try {
+          const viewerNow = viewerRef.current
+          if (!viewerNow) return false
+
+          const cameraPos = viewerNow.camera.positionWC
+          if (!isFiniteCartesian3(cameraPos)) {
+            return false
+          }
+
+          const cameraMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(cameraPos)
+          if (!Number.isFinite(cameraMagnitudeSq) || cameraMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+
+          Cesium.Cartesian3.normalize(cameraPos, orbitNormalScratch)
+          if (!isFiniteCartesian3(orbitNormalScratch)) {
+            return false
+          }
+
+          const axis =
+            Math.abs(Cesium.Cartesian3.dot(orbitNormalScratch, Cesium.Cartesian3.UNIT_Z)) > 0.9
+              ? Cesium.Cartesian3.UNIT_Y
+              : Cesium.Cartesian3.UNIT_Z
+          Cesium.Cartesian3.clone(axis, axisScratch)
+
+          Cesium.Cartesian3.cross(axisScratch, orbitNormalScratch, orbitBasisUScratch)
+          let basisUMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitBasisUScratch)
+          if (!Number.isFinite(basisUMagnitudeSq) || basisUMagnitudeSq <= Cesium.Math.EPSILON12) {
+            Cesium.Cartesian3.cross(Cesium.Cartesian3.UNIT_X, orbitNormalScratch, orbitBasisUScratch)
+            basisUMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitBasisUScratch)
+          }
+          if (!Number.isFinite(basisUMagnitudeSq) || basisUMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+
+          Cesium.Cartesian3.normalize(orbitBasisUScratch, orbitBasisUScratch)
+          if (!isFiniteCartesian3(orbitBasisUScratch)) {
+            return false
+          }
+
+          Cesium.Cartesian3.cross(orbitNormalScratch, orbitBasisUScratch, orbitBasisVScratch)
+          const basisVMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitBasisVScratch)
+          if (!Number.isFinite(basisVMagnitudeSq) || basisVMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+          Cesium.Cartesian3.normalize(orbitBasisVScratch, orbitBasisVScratch)
+          if (!isFiniteCartesian3(orbitBasisVScratch)) {
+            return false
+          }
+
+          const precessionCos = Math.cos(precessionAngleRad)
+          const precessionSin = Math.sin(precessionAngleRad)
+          Cesium.Cartesian3.multiplyByScalar(orbitBasisUScratch, precessionCos, axisScratch)
+          Cesium.Cartesian3.multiplyByScalar(orbitBasisVScratch, precessionSin, orbitPrecessionDirScratch)
+          Cesium.Cartesian3.add(axisScratch, orbitPrecessionDirScratch, orbitPrecessionDirScratch)
+          const precessionDirMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitPrecessionDirScratch)
+          if (!Number.isFinite(precessionDirMagnitudeSq) || precessionDirMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+          Cesium.Cartesian3.normalize(orbitPrecessionDirScratch, orbitPrecessionDirScratch)
+          if (!isFiniteCartesian3(orbitPrecessionDirScratch)) {
+            return false
+          }
+
+          const cosTilt = Math.cos(orbitPlaneTiltRad)
+          const sinTilt = Math.sin(orbitPlaneTiltRad)
+          Cesium.Cartesian3.multiplyByScalar(orbitNormalScratch, cosTilt, axisScratch)
+          Cesium.Cartesian3.multiplyByScalar(orbitPrecessionDirScratch, sinTilt, orbitNormalScratch)
+          Cesium.Cartesian3.add(axisScratch, orbitNormalScratch, orbitNormalScratch)
+          const tiltedNormalMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitNormalScratch)
+          if (!Number.isFinite(tiltedNormalMagnitudeSq) || tiltedNormalMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+          Cesium.Cartesian3.normalize(orbitNormalScratch, orbitNormalScratch)
+          if (!isFiniteCartesian3(orbitNormalScratch)) {
+            return false
+          }
+
+          const projectedAmount = Cesium.Cartesian3.dot(orbitPrecessionDirScratch, orbitNormalScratch)
+          Cesium.Cartesian3.multiplyByScalar(orbitNormalScratch, projectedAmount, axisScratch)
+          Cesium.Cartesian3.subtract(orbitPrecessionDirScratch, axisScratch, orbitBasisUScratch)
+          const finalBasisUMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitBasisUScratch)
+          if (!Number.isFinite(finalBasisUMagnitudeSq) || finalBasisUMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+          Cesium.Cartesian3.normalize(orbitBasisUScratch, orbitBasisUScratch)
+          if (!isFiniteCartesian3(orbitBasisUScratch)) {
+            return false
+          }
+
+          Cesium.Cartesian3.cross(orbitNormalScratch, orbitBasisUScratch, orbitBasisVScratch)
+          const finalBasisVMagnitudeSq = Cesium.Cartesian3.magnitudeSquared(orbitBasisVScratch)
+          if (!Number.isFinite(finalBasisVMagnitudeSq) || finalBasisVMagnitudeSq <= Cesium.Math.EPSILON12) {
+            return false
+          }
+
+          Cesium.Cartesian3.normalize(orbitBasisVScratch, orbitBasisVScratch)
+          return isFiniteCartesian3(orbitBasisVScratch)
+        } catch {
+          return false
+        }
+      }
+
+      const orbitPoint = (a: number) => {
+        const cosA = Math.cos(a)
+        const sinA = Math.sin(a)
+        return new Cesium.Cartesian3(
+          orbitBasisUScratch.x * cosA * orbitRadius +
+            orbitBasisVScratch.x * sinA * orbitRadius,
+          orbitBasisUScratch.y * cosA * orbitRadius +
+            orbitBasisVScratch.y * sinA * orbitRadius,
+          orbitBasisUScratch.z * cosA * orbitRadius +
+            orbitBasisVScratch.z * sinA * orbitRadius
+        )
+      }
+
+      if (!computeOrbitBasis(planePrecessionAngle)) {
+        clearLandingOrbit(liveViewer)
+        return
+      }
+
+      const initialHeadPosition = orbitPoint(angle)
+      if (!isFiniteCartesian3(initialHeadPosition)) {
+        clearLandingOrbit(liveViewer)
+        return
+      }
+      orbitTrailPositionsRef.current = [initialHeadPosition, initialHeadPosition]
+
+      const trailPositionsProperty = new Cesium.CallbackProperty(() => orbitTrailPositionsRef.current, false)
+
+      orbitTrailGlowEntityRef.current = liveViewer.entities.add({
+        polyline: {
+          positions: trailPositionsProperty,
+          width: 14,
+          material: new Cesium.PolylineGlowMaterialProperty({
+            color: trailGlowColor,
+            glowPower: 0.22,
+            taperPower: 0.78,
+          }),
+        },
+      })
+
+      orbitTrailCoreEntityRef.current = liveViewer.entities.add({
+        polyline: {
+          positions: trailPositionsProperty,
+          width: 4,
+          material: trailCoreColor,
+        },
+      })
+
+      const drawFrame = (now: number, advance: boolean) => {
+        const viewerNow = viewerRef.current
+        const headNow = orbitHeadBillboardRef.current
+        if (!viewerNow || !headNow) return false
+
+        const lastNow = orbitLastNowRef.current ?? now
+        const dt = Math.min(0.05, (now - lastNow) / 1000)
+        orbitLastNowRef.current = now
+
+        if (advance) {
+          angle = (angle + speedRadPerSec * dt) % Cesium.Math.TWO_PI
+          planePrecessionAngle = (planePrecessionAngle + orbitPlanePrecessionRadPerSec * dt) % Cesium.Math.TWO_PI
+        }
+
+        if (!computeOrbitBasis(planePrecessionAngle)) return false
+
+        const headPosition = orbitPoint(angle)
+        if (!isFiniteCartesian3(headPosition)) return false
+
+        headNow.position = headPosition
+        headNow.scale = 0.76 + Math.sin(now * 0.0044) * 0.08
+
+        const prevTrail = orbitTrailPositionsRef.current
+        const nextTrail: import("cesium").Cartesian3[] = [headPosition]
+        const carryCount = Math.min(trailPointCount - 1, prevTrail.length)
+        for (let i = 0; i < carryCount; i += 1) {
+          const point = prevTrail[i]
+          if (!isFiniteCartesian3(point)) return false
+          nextTrail.push(point)
+        }
+        if (nextTrail.length < 2) {
+          nextTrail.push(headPosition)
+        }
+        orbitTrailPositionsRef.current = nextTrail
+
+        viewerNow.scene.requestRender()
+        return true
+      }
+
+      if (reduceMotion) {
+        const rendered = drawFrame(performance.now(), false)
+        if (!rendered) {
+          clearLandingOrbit(liveViewer)
+        }
+        return
+      }
+
+      const tick = (now: number) => {
+        if (cancelled) return
+        const rendered = drawFrame(now, true)
+        if (!rendered) {
+          clearLandingOrbit()
+          return
+        }
+        orbitRafRef.current = window.requestAnimationFrame(tick)
+      }
+
+      orbitLastNowRef.current = null
+      orbitRafRef.current = window.requestAnimationFrame(tick)
+    })()
+
+    return () => {
+      cancelled = true
+      clearLandingOrbit()
+    }
+  }, [clearLandingOrbit, hue, isHero, landingActive, ready, saturation])
 
   useEffect(() => {
     if (!ready) return
