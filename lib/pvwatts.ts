@@ -4,6 +4,8 @@ export type PVWattsResult = {
   inputs: Record<string, unknown>
 }
 
+const PVWATTS_TIMEOUT_MS = 12_000
+
 function num(x: unknown) {
   return typeof x === "number" && Number.isFinite(x) ? x : null
 }
@@ -32,7 +34,20 @@ export async function callPVWatts(params: {
   url.searchParams.set("module_type", String(params.moduleType ?? 1))
   url.searchParams.set("array_type", String(params.arrayType ?? 1))
 
-  const res = await fetch(url.toString(), { cache: "no-store" })
+  const ac = new AbortController()
+  const timeoutId = setTimeout(() => ac.abort(), PVWATTS_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(url.toString(), { cache: "no-store", signal: ac.signal })
+  } catch (e) {
+    if (ac.signal.aborted) {
+      throw new Error(`PVWatts request timed out after ${PVWATTS_TIMEOUT_MS}ms`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timeoutId)
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`PVWatts error ${res.status}: ${text.slice(0, 240)}`)

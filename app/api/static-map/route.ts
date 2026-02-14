@@ -1,6 +1,11 @@
 import { NextRequest } from "next/server"
+import { requestClientKey, takeRateLimitToken } from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
+
+const ROUTE_TIMEOUT_MS = 12_000
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 45
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n))
@@ -81,6 +86,22 @@ async function geocodeAddress(address: string, signal: AbortSignal) {
 }
 
 export async function GET(req: NextRequest) {
+  const clientKey = requestClientKey(req.headers)
+  const rate = takeRateLimitToken({
+    key: `static-map:${clientKey}`,
+    limit: RATE_LIMIT_MAX,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+  })
+  if (!rate.ok) {
+    return Response.json(
+      { error: "Too many static-map requests. Please slow down." },
+      {
+        status: 429,
+        headers: { "retry-after": String(rate.retryAfterSec) },
+      }
+    )
+  }
+
   const { searchParams } = new URL(req.url)
 
   const address = (searchParams.get("address") ?? "").trim()
@@ -94,6 +115,7 @@ export async function GET(req: NextRequest) {
 
   const ac = new AbortController()
   const signal = ac.signal
+  const timeoutId = setTimeout(() => ac.abort(), ROUTE_TIMEOUT_MS)
 
   let lat = latParam
   let lng = lngParam
@@ -156,8 +178,12 @@ export async function GET(req: NextRequest) {
       },
     })
   } catch (e) {
+    if (signal.aborted) {
+      return Response.json({ error: "Static map request timed out." }, { status: 504 })
+    }
     return Response.json({ error: e instanceof Error ? e.message : "Static map failed." }, { status: 500 })
   } finally {
+    clearTimeout(timeoutId)
     ac.abort()
   }
 }

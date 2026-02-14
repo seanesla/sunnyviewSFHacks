@@ -21,11 +21,19 @@ export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY
   if (!apiKey) {
     return NextResponse.json(
-      { audioUrl: null, note: 'Stub mode' },
+      {
+        audioUrl: null,
+        note: 'Text-to-speech is disabled. Configure ELEVENLABS_API_KEY on the backend to enable audio.',
+      },
       { status: 200 },
     )
   }
 
-  // TODO: Implement ElevenLabs TTS fetch call and return an audio URL.
-  return NextResponse.json({ audioUrl: null, note: 'Stub mode' }, { status: 200 })
+  return NextResponse.json(
+    {
+      audioUrl: null,
+      note: 'Text-to-speech provider integration is not implemented in this repository yet.',
+    },
+    { status: 200 },
+  )
 }

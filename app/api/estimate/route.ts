@@ -3,6 +3,7 @@ import { z } from "zod"
 
 import { co2KgPerKwh } from "@/lib/co2"
 import { callPVWatts } from "@/lib/pvwatts"
+import { requestClientKey, takeRateLimitToken } from "@/lib/rate-limit"
 import { getRedis } from "@/lib/redis"
 
 export const runtime = "nodejs"
@@ -39,11 +40,23 @@ type EstimateOut = {
 
 type CacheEntry = { t: number; payload: EstimateOut }
 const MEM_TTL_MS = 24 * 60 * 60 * 1000
+const MEM_CACHE_MAX_ENTRIES = 400
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 40
 
 function memCache() {
   const g = globalThis as unknown as { __sunnyviewEstimateCache?: Map<string, CacheEntry> }
   if (!g.__sunnyviewEstimateCache) g.__sunnyviewEstimateCache = new Map()
   return g.__sunnyviewEstimateCache
+}
+
+function setMemCache(key: string, payload: EstimateOut, t = Date.now()) {
+  const mem = memCache()
+  mem.set(key, { t, payload })
+  if (mem.size > MEM_CACHE_MAX_ENTRIES) {
+    const oldestKey = mem.keys().next().value
+    if (oldestKey) mem.delete(oldestKey)
+  }
 }
 
 function cacheKey(p: { lat: number; lng: number; tilt: number; az: number; dcKw: number; losses: number }) {
@@ -63,6 +76,22 @@ function fallbackEstimate(params: { dcKw: number; lat?: number; lng?: number; re
 }
 
 export async function POST(req: Request) {
+  const clientKey = requestClientKey(req.headers)
+  const rate = takeRateLimitToken({
+    key: `estimate:${clientKey}`,
+    limit: RATE_LIMIT_MAX,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+  })
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: "Too many estimate requests. Please slow down." },
+      {
+        status: 429,
+        headers: { "retry-after": String(rate.retryAfterSec) },
+      }
+    )
+  }
+
   const body = await req.json().catch(() => ({}))
   const parsed = EstimateSchema.safeParse(body)
   if (!parsed.success) {
@@ -104,7 +133,7 @@ export async function POST(req: Request) {
     try {
       const cached = await redis.get<EstimateOut>(key)
       if (cached) {
-        mem.set(key, { t: now, payload: cached })
+        setMemCache(key, cached, now)
         return NextResponse.json({ ...cached, assumptions: { ...(cached.assumptions ?? {}), source: "redis_cache" } }, { status: 200 })
       }
     } catch {
@@ -131,7 +160,7 @@ export async function POST(req: Request) {
       assumptions: { source: "pvwatts", pvwattsInputs: pv.inputs },
     }
 
-    mem.set(key, { t: now, payload: out })
+    setMemCache(key, out, now)
     if (redis) {
       try {
         await redis.set(key, out, { ex: 60 * 60 * 24 })
@@ -143,7 +172,7 @@ export async function POST(req: Request) {
     return NextResponse.json(out, { status: 200 })
   } catch {
     const out = fallbackEstimate({ dcKw, lat, lng, reason: "fallback_after_pvwatts_error" })
-    mem.set(key, { t: now, payload: out })
+    setMemCache(key, out, now)
     return NextResponse.json(out, { status: 200 })
   }
 }
