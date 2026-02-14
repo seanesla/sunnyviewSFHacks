@@ -13,7 +13,7 @@ Last updated: 2026-02-12
 
 sunnyview is a 30-second solar feasibility demo:
 
-1) Paste a Google Maps link (preferred) or upload a satellite screenshot  
+1) Paste a Google Maps link (preferred)  
 2) Trace the usable roof with your mouse (or click “Auto-outline”)  
 3) The roof instantly fills with a panel layout while numbers update live:
    - # panels
@@ -53,7 +53,7 @@ Track alignment map (planned):
 ## 2. Product experience (user journeys)
 
 ### 2.1 Homeowner (single roof, 30 seconds)
-1) Paste Google Maps link or upload screenshot  
+1) Paste Google Maps link  
 2) “Auto-outline” OR manual trace  
 3) Optionally brush out obstacles (skylights, HVAC) or accept AI suggestions  
 4) See live: panels, kW, kWh/year, CO₂/year  
@@ -146,11 +146,9 @@ Best path (wow + accuracy):
   - `mPerPx = cos(latRad) * 2πR / (256 * 2^zoom)`
   - where `R = 6378137` meters
 
-Fallback path (screenshot upload):
-- We do not know zoom.
-- Ask user to calibrate with a known distance:
-  - “Draw a line across the roof width, enter feet/meters”
-- Store `mPerPx` per project after calibration.
+Current repository flow:
+- Screenshot upload has been removed from the UI.
+- Scale is derived from map latitude + zoom in the address/map-link flow.
 
 ### 4.4 Live compute in the browser
 To keep the demo snappy, these run locally:

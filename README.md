@@ -57,7 +57,7 @@ GEMINI_MODEL=gemini-2.5-flash
 ## How to use
 
 1. Launch the demo.
-2. Pick an input mode: address search or screenshot upload.
+2. Search for the house address.
 3. Trace the roof polygon.
 4. Adjust assumptions.
 5. Review panel count, DC kW, annual kWh, and annual CO2.
