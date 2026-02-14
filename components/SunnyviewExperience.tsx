@@ -1658,7 +1658,7 @@ export function SunnyviewExperience() {
               )}
             >
               <aside className="pointer-events-auto relative min-h-0 transition-[opacity,transform,filter] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
-                <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1">
+                <div className="absolute inset-0 h-full min-h-0 overflow-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   <div
                     className={cn(
                       "transition-[opacity,transform,filter] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
@@ -1676,7 +1676,7 @@ export function SunnyviewExperience() {
 
                 <div
                   className={cn(
-                    "absolute inset-0 h-full min-h-0 overflow-auto pr-1",
+                    "absolute inset-0 h-full min-h-0 overflow-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
                     "transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                     opened
                       ? opening
