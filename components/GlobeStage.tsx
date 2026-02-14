@@ -8,6 +8,7 @@ export function GlobeStage({
   lng,
   interactive,
   onPrimaryClick,
+  onPickLocation,
   dim,
   className,
   onReadyChange,
@@ -16,6 +17,7 @@ export function GlobeStage({
   lng: number | null
   interactive: boolean
   onPrimaryClick?: () => void
+  onPickLocation?: (p: { lat: number; lng: number }) => void
   dim?: boolean
   className?: string
   onReadyChange?: (ready: boolean) => void
@@ -28,6 +30,7 @@ export function GlobeStage({
         showUi={false}
         interactive={interactive}
         onPrimaryClick={onPrimaryClick}
+        onPickLocation={onPickLocation}
         frame={false}
         variant="hero"
         onReadyChange={onReadyChange}

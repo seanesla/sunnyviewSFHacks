@@ -272,10 +272,68 @@ export function SunnyviewExperience() {
   const [lng, setLng] = useState<number | null>(null);
   const [zoom, setZoom] = useState<number>(19);
 
+  const reverseGeocodeAbortRef = useRef<AbortController | null>(null);
+  const pickEnabled = panelsMounted && globeInteractive && mapInput.kind === "address";
+  const handlePickLocation = useCallback(
+    (p: { lat: number; lng: number }) => {
+      if (!pickEnabled) return;
+      const nextLat = p.lat;
+      const nextLng = p.lng;
+
+      setLat(nextLat);
+      setLng(nextLng);
+
+      setMapInput((prev) => {
+        if (prev.kind !== "address") return prev;
+        return {
+          ...prev,
+          lat: nextLat,
+          lng: nextLng,
+          address: "",
+          mPerPx: null,
+        };
+      });
+
+      reverseGeocodeAbortRef.current?.abort();
+      const ac = new AbortController();
+      reverseGeocodeAbortRef.current = ac;
+
+      void (async () => {
+        try {
+          const res = await fetch(
+            apiUrl(`/api/reverse-geocode?lat=${encodeURIComponent(nextLat)}&lng=${encodeURIComponent(nextLng)}`),
+            {
+              method: "GET",
+              headers: { accept: "application/json" },
+              signal: ac.signal,
+            },
+          );
+          if (!res.ok) return;
+          const data = (await res.json().catch(() => null)) as any;
+          const displayName = typeof data?.displayName === "string" ? data.displayName.trim() : "";
+          if (!displayName) return;
+          setMapInput((prev) => {
+            if (prev.kind !== "address") return prev;
+            if (prev.lat !== nextLat || prev.lng !== nextLng) return prev;
+            if ((prev.address ?? "").trim().length > 0) return prev;
+            return { ...prev, address: displayName };
+          });
+        } catch {
+          // ignore
+        }
+      })();
+    },
+    [pickEnabled],
+  );
+
   useEffect(() => {
     if (!panelsMounted) return;
     if (mapInput.kind !== "address") return;
-    if (mapInput.lat === null || mapInput.lng === null) return;
+    if (mapInput.lat === null || mapInput.lng === null) {
+      setLat(null);
+      setLng(null);
+      return;
+    }
     setLat(mapInput.lat);
     setLng(mapInput.lng);
     setZoom(mapInput.zoom ?? 19);
@@ -822,6 +880,35 @@ export function SunnyviewExperience() {
     setPhase("landing");
   }
 
+  function clearSite() {
+    reverseGeocodeAbortRef.current?.abort();
+    segmentAbortRef.current?.abort();
+
+    lastAutoSegmentKeyRef.current = null;
+
+    setMapInput({
+      kind: "address",
+      address: "",
+      lat: null,
+      lng: null,
+      zoom: 19,
+      mPerPx: null,
+    });
+    setLat(null);
+    setLng(null);
+    setZoom(19);
+
+    setVertices([]);
+    setClosed(false);
+    setPanels([]);
+    setCandidatePolygons(null);
+    setAutoOutlineBusy(false);
+    setAutoOutlineError(null);
+    setAutoOutlineHint(null);
+
+    setMobilePane("setup");
+  }
+
   useEffect(() => {
     if (!panelsMounted) return;
     if (!hasBackend) return;
@@ -1298,6 +1385,19 @@ export function SunnyviewExperience() {
 
   const leftPanel = (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
+          Site
+        </div>
+        <button
+          type="button"
+          onClick={clearSite}
+          className="rounded-full border border-border/70 bg-background/40 px-3 py-1 text-xs font-medium text-foreground transition hover:bg-background/60"
+        >
+          Clear
+        </button>
+      </div>
+
       <MapInput value={mapInput} onChange={setMapInput} />
 
       <div className="glass-card p-4">
@@ -1674,6 +1774,7 @@ export function SunnyviewExperience() {
         lng={lng}
         interactive={globeInteractive}
         onPrimaryClick={opened || settingsOpen ? undefined : openApp}
+        onPickLocation={pickEnabled ? handlePickLocation : undefined}
         onReadyChange={setGlobeBootReady}
         dim={opened && !settingsOpen}
         className="z-[2]"

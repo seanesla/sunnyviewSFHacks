@@ -60,6 +60,7 @@ export function GlobeView({
   showUi = true,
   interactive = true,
   onPrimaryClick,
+  onPickLocation,
   frame = true,
   variant = "app",
   onReadyChange,
@@ -70,6 +71,7 @@ export function GlobeView({
   showUi?: boolean
   interactive?: boolean
   onPrimaryClick?: () => void
+  onPickLocation?: (p: { lat: number; lng: number }) => void
   frame?: boolean
   variant?: "app" | "hero"
   onReadyChange?: (ready: boolean) => void
@@ -83,6 +85,7 @@ export function GlobeView({
   const viewerRef = useRef<import("cesium").Viewer | null>(null)
   const cesiumRef = useRef<CesiumModule | null>(null)
   const markerEntityRef = useRef<import("cesium").Entity | null>(null)
+  const pickHandlerRef = useRef<import("cesium").ScreenSpaceEventHandler | null>(null)
   const clickSpinRafRef = useRef<number | null>(null)
   const landingSpinRafRef = useRef<number | null>(null)
   const landingSpinLastNowRef = useRef<number | null>(null)
@@ -397,6 +400,14 @@ export function GlobeView({
         landingSpinRafRef.current = null
         landingSpinLastNowRef.current = null
       }
+      if (pickHandlerRef.current) {
+        try {
+          pickHandlerRef.current.destroy()
+        } catch {
+          // ignore
+        }
+        pickHandlerRef.current = null
+      }
       const v = viewerRef.current
       if (v && renderErrorListener) {
         try {
@@ -429,6 +440,72 @@ export function GlobeView({
     c.enableTilt = interactive
     c.enableLook = interactive
   }, [interactive, ready])
+
+  useEffect(() => {
+    if (!ready) return
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    if (!interactive || !onPickLocation) {
+      if (pickHandlerRef.current) {
+        try {
+          pickHandlerRef.current.destroy()
+        } catch {
+          // ignore
+        }
+        pickHandlerRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+    ;(async () => {
+      const Cesium: CesiumModule = cesiumRef.current ?? (await import("cesium"))
+      cesiumRef.current = Cesium
+      if (cancelled) return
+
+      if (pickHandlerRef.current) {
+        try {
+          pickHandlerRef.current.destroy()
+        } catch {
+          // ignore
+        }
+        pickHandlerRef.current = null
+      }
+
+      const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas)
+      pickHandlerRef.current = handler
+      handler.setInputAction(
+        (movement: any) => {
+          const viewerNow = viewerRef.current
+          const CesiumNow = cesiumRef.current
+          if (!viewerNow || !CesiumNow) return
+          const pos = movement?.position
+          if (!pos) return
+          const cartesian = viewerNow.camera.pickEllipsoid(pos, viewerNow.scene.globe.ellipsoid)
+          if (!cartesian) return
+          const cartographic = CesiumNow.Cartographic.fromCartesian(cartesian)
+          const pickedLat = CesiumNow.Math.toDegrees(cartographic.latitude)
+          const pickedLng = CesiumNow.Math.toDegrees(cartographic.longitude)
+          if (!Number.isFinite(pickedLat) || !Number.isFinite(pickedLng)) return
+          onPickLocation({ lat: pickedLat, lng: pickedLng })
+        },
+        Cesium.ScreenSpaceEventType.LEFT_CLICK
+      )
+    })()
+
+    return () => {
+      cancelled = true
+      if (pickHandlerRef.current) {
+        try {
+          pickHandlerRef.current.destroy()
+        } catch {
+          // ignore
+        }
+        pickHandlerRef.current = null
+      }
+    }
+  }, [interactive, onPickLocation, ready])
 
   useEffect(() => {
     if (!ready) return
@@ -813,7 +890,7 @@ export function GlobeView({
       const viewer = viewerRef.current
       if (!viewer) return
 
-      const position = Cesium.Cartesian3.fromDegrees(lng as number, lat as number, 20)
+      const position = Cesium.Cartesian3.fromDegrees(lng as number, lat as number, 0)
       if (!markerEntityRef.current) {
         markerEntityRef.current = viewer.entities.add({
           position,
@@ -822,6 +899,8 @@ export function GlobeView({
             color: Cesium.Color.fromCssColorString("#ffd166"),
             outlineColor: Cesium.Color.fromCssColorString("#0b0f19"),
             outlineWidth: 2,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
           label: {
             text: "Site",
@@ -832,6 +911,8 @@ export function GlobeView({
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             pixelOffset: new Cesium.Cartesian2(0, -12),
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         })
       } else {

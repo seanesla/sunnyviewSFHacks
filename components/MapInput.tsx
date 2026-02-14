@@ -36,6 +36,14 @@ function looksLikeFullAddress(q: string) {
   return hasHouse && hasComma && (hasZip || hasState)
 }
 
+function roundZoom(z: number) {
+  return Number.isFinite(z) ? Math.round(z) : 19
+}
+
+function computedMetersPerPixelFor(lat: number, z: number) {
+  return computeMetersPerPixel(lat, roundZoom(z)) / STATIC_MAP_SCALE
+}
+
 export function MapInput({
   value,
   onChange,
@@ -54,10 +62,10 @@ export function MapInput({
     score: number | null
   }
 
-  const [address, setAddress] = useState<string>(value.address ?? "")
-  const [zoom, setZoom] = useState<number>(value.zoom ?? 19)
-  const [foundLat, setFoundLat] = useState<number | null>(value.lat)
-  const [foundLng, setFoundLng] = useState<number | null>(value.lng)
+  const address = value.address ?? ""
+  const zoom = Number.isFinite(value.zoom ?? NaN) ? (value.zoom as number) : 19
+  const foundLat = value.lat
+  const foundLng = value.lng
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [geoBusy, setGeoBusy] = useState(false)
   const [suggestBusy, setSuggestBusy] = useState(false)
@@ -72,6 +80,28 @@ export function MapInput({
   const [expanded, setExpanded] = useState(false)
   const lastCenterRef = useRef<{ lat: number; lng: number } | null>(
     value.lat !== null && value.lng !== null ? { lat: value.lat, lng: value.lng } : null
+  )
+
+  useEffect(() => {
+    if (value.lat === null || value.lng === null) return
+    lastCenterRef.current = { lat: value.lat, lng: value.lng }
+    setBiasLat(value.lat)
+    setBiasLng(value.lng)
+  }, [value.lat, value.lng])
+
+  const emit = useCallback(
+    (next: { address: string; lat: number | null; lng: number | null; zoom: number }) => {
+      const hasCoords = next.lat !== null && next.lng !== null
+      onChange({
+        kind: "address",
+        address: next.address,
+        lat: next.lat,
+        lng: next.lng,
+        zoom: roundZoom(next.zoom),
+        mPerPx: hasCoords && next.lat !== null ? computedMetersPerPixelFor(next.lat, next.zoom) : null,
+      })
+    },
+    [onChange]
   )
 
   const canSearch = useMemo(() => {
@@ -111,10 +141,10 @@ export function MapInput({
 
       if (opt.lat !== null && opt.lng !== null) {
         setSelectedId(opt.id)
-        setFoundLat(opt.lat)
-        setFoundLng(opt.lng)
-        setAddress(opt.displayName)
         lastCenterRef.current = { lat: opt.lat, lng: opt.lng }
+        setBiasLat(opt.lat)
+        setBiasLng(opt.lng)
+        emit({ address: opt.displayName, lat: opt.lat, lng: opt.lng, zoom })
         return
       }
 
@@ -127,17 +157,17 @@ export function MapInput({
       try {
         const resolved = await resolveMagicKey(opt.displayName, opt.magicKey)
         setSelectedId(resolved.id)
-        setFoundLat(resolved.lat)
-        setFoundLng(resolved.lng)
-        setAddress(resolved.displayName)
         lastCenterRef.current = { lat: resolved.lat, lng: resolved.lng }
+        setBiasLat(resolved.lat)
+        setBiasLng(resolved.lng)
+        emit({ address: resolved.displayName, lat: resolved.lat, lng: resolved.lng, zoom })
       } catch (e) {
         setGeoError(e instanceof Error ? e.message : "Address lookup failed.")
       } finally {
         setGeoBusy(false)
       }
     },
-    [resolveMagicKey]
+    [emit, resolveMagicKey, zoom]
   )
 
   const runSearch = useCallback(async () => {
@@ -197,13 +227,12 @@ export function MapInput({
       setGeoWarning(warning)
 
       await chooseOption(options[0])
-      if (!Number.isFinite(zoom)) setZoom(19)
     } catch (e) {
       setGeoError(e instanceof Error ? e.message : "Address lookup failed.")
     } finally {
       setGeoBusy(false)
     }
-  }, [address, biasLat, biasLng, chooseOption, foundLat, foundLng, zoom])
+  }, [address, biasLat, biasLng, chooseOption, foundLat, foundLng])
 
   useEffect(() => {
     const q = address.trim()
@@ -264,21 +293,32 @@ export function MapInput({
   const computedMPerPx = useMemo(() => {
     if (foundLat === null || !Number.isFinite(foundLat)) return null
     if (!Number.isFinite(zoom)) return null
-    const effectiveZoom = Math.round(zoom)
-    return computeMetersPerPixel(foundLat, effectiveZoom) / STATIC_MAP_SCALE
+    return computedMetersPerPixelFor(foundLat, zoom)
   }, [foundLat, zoom])
 
   useEffect(() => {
+    if (value.kind !== "address") return
+    if (value.lat === null || value.lng === null) return
+    const desiredZoom = roundZoom(zoom)
+    const desiredM = computedMPerPx
+    const currentZoom = value.zoom
+    const currentM = value.mPerPx
+
+    if ((currentZoom !== null && currentZoom === desiredZoom) && (currentM !== null && desiredM !== null && Math.abs(currentM - desiredM) < 1e-12)) {
+      return
+    }
+
+    // Only "fill in" derived fields; do not touch the user's typed address.
     onChange({
       kind: "address",
       address,
-      lat: foundLat,
-      lng: foundLng,
-      zoom: Number.isFinite(zoom) ? Math.round(zoom) : null,
-      mPerPx: foundLat !== null && foundLng !== null ? computedMPerPx : null,
+      lat: value.lat,
+      lng: value.lng,
+      zoom: desiredZoom,
+      mPerPx: desiredM,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, foundLat, foundLng, zoom, computedMPerPx])
+  }, [address, computedMPerPx, value.kind, value.lat, value.lng, value.mPerPx, value.zoom, zoom])
 
   return (
     <div className="space-y-3">
@@ -303,11 +343,10 @@ export function MapInput({
               }}
               onChange={(e) => {
                 const next = e.target.value
-                setAddress(next)
                 setSelectedId(null)
-                setFoundLat(null)
-                setFoundLng(null)
                 setGeoError(null)
+                setGeoWarning(null)
+                emit({ address: next, lat: null, lng: null, zoom })
               }}
             />
 
@@ -448,7 +487,10 @@ export function MapInput({
               max={21}
               step={1}
               value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
+              onChange={(e) => {
+                const nextZoom = Number(e.target.value)
+                emit({ address, lat: foundLat, lng: foundLng, zoom: nextZoom })
+              }}
               className="w-full"
             />
             <div className="text-xs text-muted-foreground">Adjust zoom if the roof looks too large or too small.</div>
