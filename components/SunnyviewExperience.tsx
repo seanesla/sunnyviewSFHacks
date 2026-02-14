@@ -11,8 +11,7 @@ import { StaticMapPhoto } from "@/components/StaticMapPhoto"
 import type { PanelSpec, PlacedPanel, Point } from "@/components/PanelPacking"
 import { packPanelsDeterministic } from "@/components/PanelPacking"
 import { RoofCanvas } from "@/components/RoofCanvas"
-import { MouseSpotlight } from "@/components/MouseSpotlight"
-import { AuroraBackground } from "@/components/AuroraBackground"
+import { BackgroundScene } from "@/components/BackgroundScene"
 import { AnimatedNumber } from "@/components/AnimatedNumber"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { apiOrigin, apiUrl } from "@/lib/api"
@@ -645,9 +644,8 @@ export function SunnyviewExperience() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background">
-      <AuroraBackground />
+      <BackgroundScene />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,20,0.10)_0%,rgba(3,8,20,0.14)_42%,rgba(3,8,20,0.28)_100%)]" />
-      <MouseSpotlight />
 
       <GlobeStage
         lat={lat}
@@ -678,6 +676,10 @@ export function SunnyviewExperience() {
 
       <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
         <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary/45 bg-primary/12 px-3 py-1.5 shadow-[0_10px_30px_-22px_rgba(0,0,0,0.95)]">
+            <span className="text-[10px] font-semibold tracking-[0.24em] text-foreground uppercase">Sunnywise</span>
+          </div>
+
           {phase === "app" && (
             <button
               type="button"

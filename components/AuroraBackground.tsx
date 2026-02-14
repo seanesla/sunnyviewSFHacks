@@ -1,6 +1,6 @@
 "use client"
 
-import { useLayoutEffect, useMemo, useRef } from "react"
+import { useLayoutEffect, useMemo, useRef, type CSSProperties } from "react"
 import { gsap } from "gsap"
 import { ScrollTrigger } from "gsap/ScrollTrigger"
 
@@ -21,10 +21,31 @@ const ORBS: OrbSpec[] = [
   { id: "d", variantClass: "sv-bg__orb--d", left: "74%", top: "56%", size: "52vmax", depth: 0.38, drift: 0.86 },
 ]
 
-export function AuroraBackground() {
+interface AuroraBackgroundProps {
+  motionScale?: number
+  intensity?: number
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
+}
+
+export function AuroraBackground({ motionScale = 1, intensity = 1 }: AuroraBackgroundProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
 
-  const sparkIds = useMemo(() => Array.from({ length: 12 }, (_, i) => i), [])
+  const motionStrength = clamp(motionScale, 0.6, 1.5)
+  const intensityStrength = clamp(intensity, 0.65, 1.35)
+
+  const sparkCount = Math.max(8, Math.round(10 + intensityStrength * 6))
+  const sparkIds = useMemo(() => Array.from({ length: sparkCount }, (_, i) => i), [sparkCount])
+  const rootStyle = useMemo(
+    () =>
+      ({
+        "--sv-bg-intensity": String(intensityStrength),
+        "--sv-bg-motion": String(motionStrength),
+      }) as CSSProperties,
+    [intensityStrength, motionStrength]
+  )
 
   useLayoutEffect(() => {
     const root = rootRef.current
@@ -35,6 +56,8 @@ export function AuroraBackground() {
 
     gsap.registerPlugin(ScrollTrigger)
     ScrollTrigger.config({ ignoreMobileResize: true, limitCallbacks: true })
+
+    const t = (base: number) => base / motionStrength
 
     const ctx = gsap.context(() => {
       const base = root.querySelector<HTMLElement>("[data-sv-bg='base']")
@@ -52,7 +75,7 @@ export function AuroraBackground() {
           rotation: 5,
           xPercent: -1.5,
           yPercent: 1,
-          duration: 34,
+          duration: t(34),
           ease: "sine.inOut",
           yoyo: true,
           repeat: -1,
@@ -62,9 +85,9 @@ export function AuroraBackground() {
 
       if (grid) {
         gsap.to(grid, {
-          x: -90,
-          y: 70,
-          duration: 42,
+          x: -90 * motionStrength,
+          y: 70 * motionStrength,
+          duration: t(42),
           ease: "sine.inOut",
           yoyo: true,
           repeat: -1,
@@ -74,8 +97,8 @@ export function AuroraBackground() {
 
       if (flareA) {
         gsap.to(flareA, {
-          xPercent: 18,
-          duration: 26,
+          xPercent: 18 * motionStrength,
+          duration: t(26),
           ease: "sine.inOut",
           yoyo: true,
           repeat: -1,
@@ -85,8 +108,8 @@ export function AuroraBackground() {
 
       if (flareB) {
         gsap.to(flareB, {
-          xPercent: -22,
-          duration: 30,
+          xPercent: -22 * motionStrength,
+          duration: t(30),
           ease: "sine.inOut",
           yoyo: true,
           repeat: -1,
@@ -97,11 +120,11 @@ export function AuroraBackground() {
       for (const orb of orbs) {
         const drift = Number(orb.dataset.drift ?? 1)
         gsap.to(orb, {
-          x: () => gsap.utils.random(-140, 140) * drift,
-          y: () => gsap.utils.random(-120, 120) * drift,
+          x: () => gsap.utils.random(-140, 140) * drift * motionStrength,
+          y: () => gsap.utils.random(-120, 120) * drift * motionStrength,
           scale: () => gsap.utils.random(0.92, 1.14),
           rotation: () => gsap.utils.random(-10, 10),
-          duration: () => gsap.utils.random(18, 30),
+          duration: () => t(gsap.utils.random(18, 30)),
           ease: "sine.inOut",
           repeat: -1,
           yoyo: true,
@@ -117,14 +140,14 @@ export function AuroraBackground() {
 
         const startX = gsap.utils.random(0, w)
         const startY = gsap.utils.random(h * 0.25, h * 1.05)
-        const driftX = gsap.utils.random(-90, 90)
-        const distanceY = gsap.utils.random(h * 0.45, h * 0.95)
-        const duration = gsap.utils.random(9, 16)
+        const driftX = gsap.utils.random(-90, 90) * motionStrength
+        const distanceY = gsap.utils.random(h * 0.45, h * 0.95) * (0.88 + motionStrength * 0.2)
+        const duration = t(gsap.utils.random(9, 16))
 
         gsap.set(el, {
           x: startX,
           y: startY,
-          opacity: gsap.utils.random(0.08, 0.22),
+          opacity: gsap.utils.random(0.08, 0.22) * intensityStrength,
           scale: gsap.utils.random(0.65, 1.5),
           force3D: true,
         })
@@ -164,10 +187,10 @@ export function AuroraBackground() {
     }, root)
 
     return () => ctx.revert()
-  }, [])
+  }, [motionStrength, intensityStrength])
 
   return (
-    <div ref={rootRef} className="sv-bg" aria-hidden="true">
+    <div ref={rootRef} className="sv-bg" style={rootStyle} aria-hidden="true">
       <div className="sv-bg__base" data-sv-bg="base" />
       <div className="sv-bg__grid" data-sv-bg="grid" />
       <div className="sv-bg__flare sv-bg__flare--a" data-sv-bg="flare-a" />

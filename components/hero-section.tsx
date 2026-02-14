@@ -24,6 +24,9 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
           Solar Feasibility in 30 Seconds
         </span>
         <h1 className="text-balance text-5xl font-extralight leading-tight tracking-tight text-foreground lg:text-7xl">
+          <span className="mb-2 block text-3xl font-medium tracking-[0.24em] text-primary text-glow sm:text-4xl">
+            SUNNYWISE
+          </span>
           <ScrambleText text="Trace a roof." trigger={visible} />
           <br />
           <span className="text-primary text-glow">
@@ -33,7 +36,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       </div>
 
       <p className="max-w-md text-pretty leading-relaxed text-muted-foreground">
-        sunnyview turns any satellite view into an instant solar layout.
+        Sunnywise turns any satellite view into an instant solar layout.
         Draw a roof polygon, and watch panels fill in live with real energy
         and CO2 estimates. No account needed.
       </p>

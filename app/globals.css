@@ -264,6 +264,8 @@ textarea:focus {
   isolation: isolate;
   contain: paint;
   transform: translateZ(0);
+  --sv-bg-intensity: var(--bg-intensity, 1);
+  --sv-bg-motion: var(--bg-motion, 1);
 }
 
 .sv-bg__base {
@@ -290,7 +292,8 @@ textarea:focus {
       oklch(0.08 0.01 var(--accent-hue)) 0%,
       oklch(0.12 0 0) 46%,
       oklch(0.07 0 0) 100%
-    );
+  );
+  opacity: calc(0.9 * var(--sv-bg-intensity));
   will-change: transform;
 }
 
@@ -301,7 +304,7 @@ textarea:focus {
     linear-gradient(to right, oklch(0.78 0.02 var(--accent-hue) / 0.05) 1px, transparent 1px),
     linear-gradient(to bottom, oklch(0.78 0.02 var(--accent-hue) / 0.05) 1px, transparent 1px);
   background-size: 96px 96px;
-  opacity: 0.9;
+  opacity: calc(0.82 * var(--sv-bg-intensity));
   mask-image: radial-gradient(60% 70% at 50% 40%, #000 0%, transparent 70%);
   -webkit-mask-image: radial-gradient(60% 70% at 50% 40%, #000 0%, transparent 70%);
   will-change: transform;
@@ -310,7 +313,7 @@ textarea:focus {
 .sv-bg__flare {
   position: absolute;
   inset: -30%;
-  opacity: 0.16;
+  opacity: calc(0.16 * var(--sv-bg-intensity));
   filter: blur(18px);
   mix-blend-mode: screen;
   will-change: transform;
@@ -327,7 +330,7 @@ textarea:focus {
 }
 
 .sv-bg__flare--b {
-  opacity: 0.1;
+  opacity: calc(0.1 * var(--sv-bg-intensity));
   transform: rotate(-10deg);
   background: linear-gradient(
     90deg,
@@ -353,7 +356,7 @@ textarea:focus {
   inset: 0;
   border-radius: 9999px;
   filter: blur(78px);
-  opacity: 0.42;
+  opacity: calc(0.42 * var(--sv-bg-intensity));
   mix-blend-mode: screen;
   transform: translate3d(0, 0, 0);
   will-change: transform;
@@ -413,6 +416,104 @@ textarea:focus {
   will-change: transform, opacity;
 }
 
+.sv-bg--prism {
+  background:
+    radial-gradient(100% 88% at 50% 48%, oklch(0.12 0.01 var(--accent-hue)) 0%, oklch(0.07 0 0) 100%),
+    linear-gradient(180deg, oklch(0.12 0.01 var(--accent-hue)) 0%, oklch(0.07 0 0) 100%);
+}
+
+.sv-prism__cone {
+  position: absolute;
+  inset: -32%;
+  mix-blend-mode: screen;
+  filter: blur(16px);
+  opacity: calc(0.52 * var(--sv-bg-intensity));
+  will-change: transform;
+}
+
+.sv-prism__cone--a {
+  background: conic-gradient(
+    from calc(24deg + 48deg * var(--sv-bg-motion)) at 50% 50%,
+    transparent 0deg,
+    oklch(0.86 calc(var(--accent-sat) * 1.1) calc(var(--accent-hue) - 35) / 0.36) 68deg,
+    transparent 150deg,
+    oklch(0.9 calc(var(--accent-sat) * 0.95) calc(var(--accent-hue) + 58) / 0.28) 230deg,
+    transparent 360deg
+  );
+  animation: sv-prism-sweep calc(16s / var(--sv-bg-motion)) linear infinite;
+}
+
+.sv-prism__cone--b {
+  background: conic-gradient(
+    from calc(220deg - 34deg * var(--sv-bg-motion)) at 50% 50%,
+    transparent 0deg,
+    oklch(0.88 calc(var(--accent-sat) * 1.08) var(--accent-hue) / 0.28) 54deg,
+    transparent 136deg,
+    oklch(0.84 calc(var(--accent-sat) * 0.92) calc(var(--accent-hue) + 108) / 0.24) 232deg,
+    transparent 360deg
+  );
+  animation: sv-prism-sweep calc(19s / var(--sv-bg-motion)) linear infinite reverse;
+}
+
+.sv-prism__rings {
+  position: absolute;
+  inset: -22%;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 0 20%, oklch(0.8 0.03 var(--accent-hue) / 0.08) 21% 22%, transparent 23% 27%, oklch(0.8 0.03 var(--accent-hue) / 0.06) 28% 29%, transparent 30%),
+    radial-gradient(circle at 50% 50%, transparent 0 38%, oklch(0.84 0.04 calc(var(--accent-hue) + 64) / 0.08) 39% 40%, transparent 41%);
+  filter: blur(0.5px);
+  opacity: calc(0.75 * var(--sv-bg-intensity));
+  animation: sv-prism-spin calc(24s / var(--sv-bg-motion)) linear infinite;
+  will-change: transform;
+}
+
+.sv-prism__noise {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(0deg, oklch(0.9 0.02 var(--accent-hue) / 0.02) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, oklch(0.9 0.02 var(--accent-hue) / 0.018) 0 1px, transparent 1px 4px);
+  mix-blend-mode: screen;
+  opacity: calc(0.34 * var(--sv-bg-intensity));
+  animation: sv-prism-noise calc(10s / var(--sv-bg-motion)) steps(2) infinite;
+}
+
+@keyframes sv-prism-sweep {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.05);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes sv-prism-spin {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+  to {
+    transform: rotate(360deg) scale(1.04);
+  }
+}
+
+@keyframes sv-prism-noise {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  33% {
+    transform: translate3d(-1.5%, 1%, 0);
+  }
+  66% {
+    transform: translate3d(1.2%, -1.2%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 .sv-bg__vignette {
   position: absolute;
   inset: 0;
@@ -424,8 +525,12 @@ textarea:focus {
 
 @media (prefers-reduced-motion: reduce) {
   .sv-bg__flare,
-  .sv-bg__grid {
+  .sv-bg__grid,
+  .sv-prism__cone,
+  .sv-prism__rings,
+  .sv-prism__noise {
     transform: none !important;
+    animation: none !important;
   }
 }
 

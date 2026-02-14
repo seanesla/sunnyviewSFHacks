@@ -1,8 +1,20 @@
 "use client"
 
 import { useEffect } from "react"
+import { cn } from "@/lib/utils"
 
-export function MouseSpotlight() {
+interface MouseSpotlightProps {
+  strength?: number
+  className?: string
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
+}
+
+export function MouseSpotlight({ strength = 1, className }: MouseSpotlightProps) {
+  const strengthScale = clamp(strength, 0.65, 1.35)
+
   useEffect(() => {
     const root = document.documentElement
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
@@ -51,12 +63,18 @@ export function MouseSpotlight() {
     }
   }, [])
 
+  const glowRadius = Math.round(420 + strengthScale * 160)
+  const glowAlpha = (0.028 + strengthScale * 0.025).toFixed(3)
+
   return (
     <div
-      className="pointer-events-none fixed inset-0 z-0 opacity-20 transition-opacity duration-300 motion-reduce:hidden"
+      className={cn(
+        "pointer-events-none fixed inset-0 z-0 opacity-20 transition-opacity duration-300 motion-reduce:hidden",
+        className
+      )}
       style={{
         background:
-          "radial-gradient(520px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), oklch(0.72 0.12 var(--accent-hue) / 0.04), transparent 44%)",
+          `radial-gradient(${glowRadius}px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), oklch(0.72 0.12 var(--accent-hue) / ${glowAlpha}), transparent 44%)`,
       }}
     />
   )

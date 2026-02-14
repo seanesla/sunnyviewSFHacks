@@ -5,6 +5,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import './globals.css'
 import { AccentProvider } from '@/lib/accent-context'
+import { BackgroundProvider } from '@/lib/background-context'
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
@@ -40,7 +41,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body suppressHydrationWarning className={`font-sans antialiased`}>
-        <AccentProvider>{children}</AccentProvider>
+        <BackgroundProvider>
+          <AccentProvider>{children}</AccentProvider>
+        </BackgroundProvider>
         <Analytics />
       </body>
     </html>
