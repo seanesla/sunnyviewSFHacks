@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, History, Settings2 } from "lucide-react";
 import { gsap } from "gsap";
-import { QRCodeCanvas } from "qrcode.react";
 import { HeroSection } from "@/components/hero-section";
 import { HistorySheet } from "@/components/history-sheet";
 import { GlobeStage } from "@/components/GlobeStage";
@@ -2555,31 +2554,24 @@ export function SunnyviewExperience() {
             </div>
             <div className="glass-surface mt-3 rounded-lg p-4">
               {shareUrl ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="grid place-items-center">
-                    <QRCodeCanvas value={shareUrl} size={156} includeMargin />
+                <div className="space-y-2">
+                  <div className="text-xs text-muted-foreground">Public link</div>
+                  <div className="glass-surface break-all rounded-md p-2 text-xs text-foreground">
+                    {shareUrl}
                   </div>
-                  <div className="space-y-2">
-                    <div className="text-xs text-muted-foreground">
-                      Public link
-                    </div>
-                    <div className="glass-surface break-all rounded-md p-2 text-xs text-foreground">
-                      {shareUrl}
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(shareUrl);
-                        } catch {
-                          // ignore
-                        }
-                      }}
-                    >
-                      Copy link
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(shareUrl);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                  >
+                    Copy link
+                  </button>
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground">

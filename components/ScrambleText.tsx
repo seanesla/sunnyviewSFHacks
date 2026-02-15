@@ -13,6 +13,9 @@ interface ScrambleTextProps {
 
 export function ScrambleText({ text, trigger = true, className, speed = 40 }: ScrambleTextProps) {
   const [display, setDisplay] = useState(text)
+  const containerClassName = className
+    ? `relative inline-block whitespace-pre ${className}`
+    : "relative inline-block whitespace-pre"
 
   useEffect(() => {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
@@ -46,5 +49,12 @@ export function ScrambleText({ text, trigger = true, className, speed = 40 }: Sc
     return () => clearInterval(interval)
   }, [text, trigger, speed])
 
-  return <span className={className}>{display}</span>
+  return (
+    <span className={containerClassName}>
+      <span className="pointer-events-none select-none invisible">{text}</span>
+      <span aria-hidden="true" className="pointer-events-none absolute top-0 left-0 block whitespace-pre overflow-visible">
+        {display}
+      </span>
+    </span>
+  )
 }

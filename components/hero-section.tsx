@@ -303,10 +303,10 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
           Solar Feasibility in 30 Seconds
         </span>
         <h1 className="hero-landing__title text-balance text-[clamp(3rem,6.4vw,6rem)] font-extralight leading-[0.98] tracking-tight text-foreground" data-motion="headline">
-          <ScrambleText text="Trace a roof." trigger={visible} />
+          <ScrambleText text="Trace" trigger={visible} /> <ScrambleText text="a" trigger={visible} /> <ScrambleText text="roof." trigger={visible} />
           <br />
           <span className="text-primary text-glow" data-motion="accent-line">
-            <ScrambleText text="See the potential." trigger={visible} speed={45} />
+            <ScrambleText text="See" trigger={visible} speed={45} /> <ScrambleText text="the" trigger={visible} speed={45} /> <ScrambleText text="potential." trigger={visible} speed={45} />
           </span>
         </h1>
       </div>
