@@ -47,9 +47,11 @@ function computedMetersPerPixelFor(lat: number, z: number) {
 export function MapInput({
   value,
   onChange,
+  compact = false,
 }: {
   value: MapInputResult
   onChange: (next: MapInputResult) => void
+  compact?: boolean
 }) {
   const COLLAPSED_SUGGESTIONS = 8
 
@@ -299,6 +301,9 @@ export function MapInput({
     return computedMetersPerPixelFor(foundLat, zoom)
   }, [foundLat, zoom])
 
+  const showFloatingSuggestions =
+    focused && address.trim().length >= 3 && (suggestBusy || geoOptions.length > 0) && selectedId === null
+
   useEffect(() => {
     if (value.kind !== "address") return
     if (value.lat === null || value.lng === null) return
@@ -325,7 +330,7 @@ export function MapInput({
 
   return (
     <div className="space-y-3">
-      <div className="glass-card p-3">
+      <div className={`glass-card p-3 ${showFloatingSuggestions ? "relative z-30" : "relative"}`}>
         <div className="text-sm font-medium text-card-foreground">Find a house by address</div>
         <div className="mt-2 flex gap-2">
           <div className="relative w-full">
@@ -353,9 +358,9 @@ export function MapInput({
               }}
             />
 
-            {focused && address.trim().length >= 3 && (suggestBusy || geoOptions.length > 0) && selectedId === null && (
+            {showFloatingSuggestions && (
               <div
-                className="glass-surface absolute left-0 right-0 top-[calc(100%+6px)] z-20 overflow-hidden rounded-md shadow-lg"
+                className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 overflow-hidden rounded-md border border-border bg-card shadow-[0_14px_28px_-12px_rgba(0,0,0,0.9)]"
                 onMouseDown={(e) => {
                   // Prevent input blur before click selection.
                   e.preventDefault()
@@ -404,97 +409,76 @@ export function MapInput({
         </div>
         {geoError && <div className="mt-2 text-xs text-destructive">{geoError}</div>}
         {geoWarning && !geoError && <div className="mt-2 text-xs text-muted-foreground">{geoWarning}</div>}
-        <div className="mt-2 text-[11px] text-muted-foreground">
-          Autocomplete is required unless you type a full address with city/state (or ZIP).
-        </div>
+        {!compact && (
+          <>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              Autocomplete is required unless you type a full address with city/state (or ZIP).
+            </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="glass-surface rounded-md px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-background/60 disabled:opacity-50"
-            disabled={geoBusy}
-            onClick={async () => {
-              if (!navigator?.geolocation) {
-                setGeoError("Geolocation not supported in this browser.")
-                return
-              }
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="glass-surface rounded-md px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-background/60 disabled:opacity-50"
+                disabled={geoBusy}
+                onClick={async () => {
+                  if (!navigator?.geolocation) {
+                    setGeoError("Geolocation not supported in this browser.")
+                    return
+                  }
 
-              setGeoError(null)
-              setGeoWarning(null)
-              setGeoBusy(true)
-              try {
-                const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-                  navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 8000 })
-                })
-                const lat = pos.coords.latitude
-                const lng = pos.coords.longitude
+                  setGeoError(null)
+                  setGeoWarning(null)
+                  setGeoBusy(true)
+                  try {
+                    const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 8000 })
+                    })
+                    const lat = pos.coords.latitude
+                    const lng = pos.coords.longitude
 
-                let label: string | null = null
-                try {
-                  label = await reverseGeocode(lat, lng)
-                } catch {
-                  label = null
-                }
+                    let label: string | null = null
+                    try {
+                      label = await reverseGeocode(lat, lng)
+                    } catch {
+                      label = null
+                    }
 
-                setSelectedId(`gps:${lng.toFixed(6)},${lat.toFixed(6)}`)
-                lastCenterRef.current = { lat, lng }
-                setGeoOptions([])
-                setExpanded(false)
-                emit({ address: label ?? "Current location", lat, lng, zoom })
-              } catch {
-                setGeoError("Could not access your location (permission denied or timed out).")
-              } finally {
-                setGeoBusy(false)
-              }
-            }}
-          >
-            Use my location
-          </button>
-        </div>
+                    setSelectedId(`gps:${lng.toFixed(6)},${lat.toFixed(6)}`)
+                    lastCenterRef.current = { lat, lng }
+                    setGeoOptions([])
+                    setExpanded(false)
+                    emit({ address: label ?? "Current location", lat, lng, zoom })
+                  } catch {
+                    setGeoError("Could not access your location (permission denied or timed out).")
+                  } finally {
+                    setGeoBusy(false)
+                  }
+                }}
+              >
+                Use my location
+              </button>
+            </div>
+          </>
+        )}
 
-        {geoOptions.length > 0 && selectedId === null && !focused && (
-          <div className="glass-surface mt-3 rounded-md p-2">
-            <div className="text-[11px] font-medium text-muted-foreground">Pick a suggestion</div>
-            <div className="mt-2 grid gap-1">
-              {geoOptions.slice(0, expanded ? 15 : COLLAPSED_SUGGESTIONS).map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className="rounded-md px-2 py-1 text-left text-xs text-foreground hover:bg-secondary/50"
-                  onClick={() => void chooseOption(c)}
-                >
-                  {c.displayName}
-                </button>
-              ))}
-              {geoOptions.length > COLLAPSED_SUGGESTIONS && (
-                <button
-                  type="button"
-                  className="rounded-md px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-secondary/40"
-                  onClick={() => setExpanded((v) => !v)}
-                >
-                  {expanded ? "Show fewer" : `Show more (${Math.min(15, geoOptions.length)} total)`}
-                </button>
-              )}
+        {!compact && (
+          <div className="mt-3">
+            <div className="glass-surface rounded-md px-3 py-2 text-xs text-muted-foreground">
+              <div>
+                lat: <span className="text-foreground">{formatNum(foundLat, 6)}</span>
+              </div>
+              <div className="mt-1">
+                lng: <span className="text-foreground">{formatNum(foundLng, 6)}</span>
+              </div>
+              <div className="mt-1">
+                zoom: <span className="text-foreground">{Number.isFinite(zoom) ? zoom.toFixed(1) : "—"}</span>
+              </div>
+              <div className="mt-1">
+                m/px: <span className="text-foreground">{computedMPerPx ? computedMPerPx.toExponential(3) : "—"}</span>
+              </div>
             </div>
           </div>
         )}
-
-        <div className="mt-3">
-          <div className="glass-surface rounded-md px-3 py-2 text-xs text-muted-foreground">
-            <div>
-              lat: <span className="text-foreground">{formatNum(foundLat, 6)}</span>
-            </div>
-            <div className="mt-1">
-              lng: <span className="text-foreground">{formatNum(foundLng, 6)}</span>
-            </div>
-            <div className="mt-1">
-              zoom: <span className="text-foreground">{Number.isFinite(zoom) ? zoom.toFixed(1) : "—"}</span>
-            </div>
-            <div className="mt-1">
-              m/px: <span className="text-foreground">{computedMPerPx ? computedMPerPx.toExponential(3) : "—"}</span>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   )

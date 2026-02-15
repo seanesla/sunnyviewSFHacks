@@ -120,6 +120,7 @@ export function RoofCanvas({
   candidatePolygons = null,
   onPickCandidate,
   centerPin = null,
+  containerClassName,
 }: {
   background: BackgroundSpec
   mPerPx: number | null
@@ -138,6 +139,7 @@ export function RoofCanvas({
   candidatePolygons?: Array<{ id: string; polygon: Point[]; score?: number }> | null
   onPickCandidate?: (id: string) => void
   centerPin?: Point | null
+  containerClassName?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -1097,7 +1099,10 @@ export function RoofCanvas({
         </div>
       )}
 
-      <div ref={containerRef} className="glass-surface relative h-[340px] w-full overflow-hidden rounded-xl sm:h-[440px] lg:h-[520px]">
+      <div
+        ref={containerRef}
+        className={`glass-surface relative w-full overflow-hidden rounded-xl ${containerClassName ?? "h-[340px] sm:h-[440px] lg:h-[520px]"}`}
+      >
         <canvas
           ref={canvasRef}
           className={`absolute inset-0 h-full w-full touch-none ${mode === "edit" ? "cursor-crosshair" : "cursor-default"}`}

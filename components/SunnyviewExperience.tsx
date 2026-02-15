@@ -1487,7 +1487,7 @@ export function SunnyviewExperience() {
       : null;
 
   const leftPanel = (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
           Site
@@ -1501,9 +1501,9 @@ export function SunnyviewExperience() {
         </button>
       </div>
 
-      <MapInput value={mapInput} onChange={setMapInput} />
+      <MapInput value={mapInput} onChange={setMapInput} compact={isMobile === false} />
 
-      <div className="glass-card p-4">
+      <div className="glass-card p-3">
         <div className="text-sm font-semibold text-foreground">
           Site + assumptions
         </div>
@@ -1566,6 +1566,7 @@ export function SunnyviewExperience() {
             ? `img:${background.src}:${background.widthPx}x${background.heightPx}`
             : background.kind
         }
+        containerClassName="h-[250px] sm:h-[300px] lg:h-[min(30vh,320px)] xl:h-[min(34vh,360px)]"
         background={background}
         mPerPx={mPerPx}
         orientationDeg={orientationDeg}
@@ -1608,9 +1609,9 @@ export function SunnyviewExperience() {
   );
 
   const rightPanel = (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <SolarForecastCard
-        className="glass-card p-4"
+        className="glass-card p-3"
         lat={lat}
         lng={lng}
         dcKw={dcKw}
@@ -1618,7 +1619,7 @@ export function SunnyviewExperience() {
         panelCount={panelCount}
       />
 
-      <div className="glass-card p-4">
+      <div className="glass-card p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-foreground">Results</div>
           <div className="text-xs text-muted-foreground">
@@ -1845,7 +1846,7 @@ export function SunnyviewExperience() {
         )}
       </div>
 
-      <div className="glass-card p-4">
+      <div className="glass-card p-3">
         <div className="text-sm font-semibold text-foreground">
           Panel packing
         </div>
@@ -2015,11 +2016,11 @@ export function SunnyviewExperience() {
       )}
 
       {startupDone && !settingsOpen && (
-        <div className="pointer-events-none relative z-20 mx-auto h-full w-full max-w-[1820px] px-4 py-3 sm:px-6 sm:py-4 lg:px-10 lg:py-5 xl:px-14">
+        <div className="pointer-events-none relative z-20 mx-auto h-full w-full max-w-[1820px] px-4 py-2 sm:px-6 sm:py-3 lg:px-10 lg:py-3 xl:px-14">
           {isMobile === null ? null : !isMobile ? (
             <div
               className={cn(
-                "grid h-full min-h-0 grid-cols-1 gap-4",
+                "grid h-full min-h-0 grid-cols-1 gap-3",
                 opened
                   ? "lg:grid-cols-[minmax(330px,420px)_minmax(0,1fr)_minmax(330px,420px)] xl:grid-cols-[minmax(350px,440px)_minmax(0,1fr)_minmax(350px,440px)]"
                   : "lg:grid-cols-[minmax(320px,460px)_minmax(0,1fr)] xl:grid-cols-[minmax(340px,480px)_minmax(0,1fr)]",
