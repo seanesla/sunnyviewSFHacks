@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Settings2 } from "lucide-react";
+import { ArrowLeft, History, Settings2 } from "lucide-react";
 import { gsap } from "gsap";
 import { QRCodeCanvas } from "qrcode.react";
 import { HeroSection } from "@/components/hero-section";
+import { HistorySheet } from "@/components/history-sheet";
 import { GlobeStage } from "@/components/GlobeStage";
 import { MapInput, type MapInputResult } from "@/components/MapInput";
 import { SunnyviewLogoLoader } from "@/components/SunnyviewLogoLoader";
@@ -17,6 +18,8 @@ import { BackgroundScene } from "@/components/BackgroundScene";
 import { AnimatedNumber } from "@/components/AnimatedNumber";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { apiOrigin, apiUrl } from "@/lib/api";
+import { saveHistory } from "@/lib/history-api";
+import type { HistorySnapshot, HistorySummary } from "@/lib/history-types";
 import { buildStaticMapSpec } from "@/lib/static-map";
 import { PANEL_OPTIONS } from "@/lib/panels";
 import { polygonAreaPx2 } from "@/lib/roof-plane";
@@ -198,6 +201,42 @@ function normalizePolygon(data: unknown, w: number, h: number): Point[] | null {
   return pts ? scaleIfNormalized(pts) : null;
 }
 
+function roundHistory(n: number, digits: number) {
+  const m = 10 ** digits;
+  return Math.round(n * m) / m;
+}
+
+function historySaveSignature(snapshot: HistorySnapshot, summary: HistorySummary) {
+  const basis = {
+    lat: roundHistory(snapshot.lat, 6),
+    lng: roundHistory(snapshot.lng, 6),
+    zoom: Math.round(snapshot.zoom),
+    panelSpec: {
+      widthM: roundHistory(snapshot.panelSpec.widthM, 3),
+      heightM: roundHistory(snapshot.panelSpec.heightM, 3),
+      wattW: roundHistory(snapshot.panelSpec.wattW, 1),
+      gapM: roundHistory(snapshot.panelSpec.gapM, 3),
+    },
+    orientationDeg: roundHistory(snapshot.layoutSummary.orientationDeg, 1),
+    panelCount: snapshot.layoutSummary.panelCount,
+    annualKwh: summary.annualKwh !== null ? Math.round(summary.annualKwh) : null,
+    vertices: snapshot.geometry.vertices.map((p) => [roundHistory(p.x, 1), roundHistory(p.y, 1)]),
+  };
+  return JSON.stringify(basis);
+}
+
+function historySummaryFromSnapshot(snapshot: HistorySnapshot): HistorySummary {
+  return {
+    address: snapshot.address,
+    panelCount: snapshot.layoutSummary.panelCount,
+    dcKw: snapshot.layoutSummary.dcKw,
+    annualKwh: snapshot.estimate ? snapshot.estimate.annualKwh : null,
+    annualCo2Kg: snapshot.estimate ? snapshot.estimate.annualCo2Kg : null,
+    lat: snapshot.lat,
+    lng: snapshot.lng,
+  };
+}
+
 
 export function SunnyviewExperience() {
   const hasBackend = apiOrigin().length > 0;
@@ -216,6 +255,8 @@ export function SunnyviewExperience() {
   const topChromeRef = useRef<HTMLDivElement | null>(null);
   const earthHintRef = useRef<HTMLDivElement | null>(null);
   const topIntroPlayedRef = useRef(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const lastHistorySigRef = useRef<string | null>(null);
 
   useEffect(() => {
     const reduceMotion =
@@ -533,6 +574,175 @@ export function SunnyviewExperience() {
     if (!closed || vertices.length < 3 || !mPerPx) return null;
     return polygonAreaPx2(vertices) * mPerPx * mPerPx;
   }, [closed, mPerPx, vertices]);
+
+  const historySnapshot = useMemo<HistorySnapshot | null>(() => {
+    if (mapInput.kind !== "address") return null;
+    if (lat === null || lng === null) return null;
+    if (!closed || vertices.length < 3 || panelCount <= 0) return null;
+
+    const address = mapInput.address?.trim() ? mapInput.address.trim() : null;
+    const nextZoom = Number.isFinite(zoom) ? Math.round(zoom) : 19;
+    const snapMPerPx = mPerPx ?? null;
+
+    return {
+      mode: "address",
+      address,
+      lat,
+      lng,
+      zoom: nextZoom,
+      mPerPx: snapMPerPx,
+      siteSpec: {
+        tiltDeg,
+        azimuthDeg,
+        lossesPct,
+      },
+      panelSpec: {
+        widthM: panelSpec.widthM,
+        heightM: panelSpec.heightM,
+        wattW: panelSpec.wattW,
+        gapM: panelSpec.gapM,
+      },
+      layoutSummary: {
+        orientationDeg,
+        panelCount,
+        dcKw,
+      },
+      geometry: {
+        vertices: vertices.map((p) => ({ x: p.x, y: p.y })),
+        closed,
+        mPerPx: snapMPerPx,
+        zoom: nextZoom,
+      },
+      estimate:
+        estimate.annualKwh > 0 && estimate.monthlyKwh.length === 12
+          ? {
+              annualKwh: estimate.annualKwh,
+              monthlyKwh: estimate.monthlyKwh,
+              annualCo2Kg: estimate.annualCo2Kg,
+              assumptions: estimate.assumptions,
+            }
+          : null,
+    };
+  }, [
+    azimuthDeg,
+    closed,
+    dcKw,
+    estimate.annualCo2Kg,
+    estimate.annualKwh,
+    estimate.assumptions,
+    estimate.monthlyKwh,
+    lat,
+    lng,
+    lossesPct,
+    mPerPx,
+    mapInput.address,
+    mapInput.kind,
+    orientationDeg,
+    panelCount,
+    panelSpec.gapM,
+    panelSpec.heightM,
+    panelSpec.wattW,
+    panelSpec.widthM,
+    tiltDeg,
+    vertices,
+    zoom,
+  ]);
+
+  const historySummary = useMemo<HistorySummary | null>(() => {
+    if (!historySnapshot) return null;
+    return historySummaryFromSnapshot(historySnapshot);
+  }, [historySnapshot]);
+
+  useEffect(() => {
+    if (!panelsMounted || !opened) return;
+    if (!historySnapshot || !historySummary) return;
+
+    const signature = historySaveSignature(historySnapshot, historySummary);
+    if (lastHistorySigRef.current === signature) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        await saveHistory({ snapshot: historySnapshot, summary: historySummary });
+        if (cancelled) return;
+        lastHistorySigRef.current = signature;
+      } catch {
+        // history is optional; avoid interrupting main experience
+      }
+    }, 1800);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [historySnapshot, historySummary, opened, panelsMounted]);
+
+  const loadHistorySnapshot = useCallback((snapshot: HistorySnapshot) => {
+    if (snapshot.mode !== "address") return;
+
+    reverseGeocodeAbortRef.current?.abort();
+    segmentAbortRef.current?.abort();
+    lastAutoSegmentKeyRef.current = null;
+
+    const nextZoom = Number.isFinite(snapshot.zoom) ? Math.round(snapshot.zoom) : 19;
+    const nextMPerPx = snapshot.mPerPx ?? snapshot.geometry.mPerPx ?? null;
+
+    setMapInput({
+      kind: "address",
+      address: snapshot.address ?? "",
+      lat: snapshot.lat,
+      lng: snapshot.lng,
+      zoom: nextZoom,
+      mPerPx: nextMPerPx,
+    });
+    setLat(snapshot.lat);
+    setLng(snapshot.lng);
+    setZoom(nextZoom);
+
+    setTiltDeg(snapshot.siteSpec.tiltDeg);
+    setAzimuthDeg(snapshot.siteSpec.azimuthDeg);
+    setLossesPct(snapshot.siteSpec.lossesPct);
+    setPanelSpec({
+      widthM: snapshot.panelSpec.widthM,
+      heightM: snapshot.panelSpec.heightM,
+      wattW: snapshot.panelSpec.wattW,
+      gapM: snapshot.panelSpec.gapM,
+    });
+    setPanelSpecMode("manual");
+    setPanelChoiceId("custom");
+    setOrientationDeg(snapshot.layoutSummary.orientationDeg);
+
+    setVertices(snapshot.geometry.vertices.map((p) => ({ x: p.x, y: p.y })));
+    setClosed(snapshot.geometry.closed);
+
+    if (snapshot.estimate && snapshot.estimate.monthlyKwh.length === 12) {
+      setEstimate({
+        annualKwh: snapshot.estimate.annualKwh,
+        monthlyKwh: snapshot.estimate.monthlyKwh,
+        annualCo2Kg: snapshot.estimate.annualCo2Kg,
+        source: "server",
+        assumptions: snapshot.estimate.assumptions,
+      });
+    }
+
+    setCandidatePolygons(null);
+    setAutoOutlineBusy(false);
+    setAutoOutlineError(null);
+    setAutoOutlineHint("Loaded from history.");
+
+    setSettingsOpen(false);
+    setShowShare(false);
+    setHistoryOpen(false);
+    setActionNotice("Loaded history snapshot.");
+    setMobilePane("setup");
+
+    setPanelsMounted(true);
+    setEntered(true);
+    setPhase("app");
+
+    const summary = historySummaryFromSnapshot(snapshot);
+    lastHistorySigRef.current = historySaveSignature(snapshot, summary);
+  }, []);
 
   const panelBrandAddrKey = useMemo(() => {
     if (mapInput.kind !== "address") return null;
@@ -968,6 +1178,7 @@ export function SunnyviewExperience() {
     segmentAbortRef.current?.abort();
 
     lastAutoSegmentKeyRef.current = null;
+    lastHistorySigRef.current = null;
 
     setMapInput({
       kind: "address",
@@ -2151,6 +2362,24 @@ export function SunnyviewExperience() {
               type="button"
               onClick={() => {
                 setShowShare(false);
+                setHistoryOpen(true);
+              }}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold text-foreground shadow-[0_12px_28px_-16px_rgba(0,0,0,0.95)] backdrop-blur-sm transition",
+                historyOpen
+                  ? "border-primary/70 bg-primary/26"
+                  : "border-primary/60 bg-primary/14 hover:bg-primary/22",
+              )}
+            >
+              <History size={14} />
+              History
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowShare(false);
+                setHistoryOpen(false);
                 setSettingsOpen(true);
               }}
               className="inline-flex items-center gap-2 rounded-full border border-primary/65 bg-primary/18 px-4 py-1.5 text-xs font-semibold text-foreground shadow-[0_12px_28px_-16px_rgba(0,0,0,0.95)] backdrop-blur-sm transition hover:bg-primary/28"
@@ -2289,6 +2518,13 @@ export function SunnyviewExperience() {
           <SunnyviewLogoLoader className="relative z-[1]" />
         </div>
       )}
+
+      <HistorySheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onLoadSnapshot={loadHistorySnapshot}
+        onNotice={setActionNotice}
+      />
 
       {settingsOpen && (
         <div className="absolute inset-0 z-40">
