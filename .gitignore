@@ -21,6 +21,7 @@ dev.log
 .devserver.log
 .next-dev.log
 .next-dev.pid
+pnpm-lock.yaml
 .env*.local
 .DS_Store
 CLAUDE.md
