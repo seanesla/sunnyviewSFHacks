@@ -18,8 +18,8 @@ const CHROME_BIN =
   process.env.CHROME_BIN ||
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
-const OUTPUT_WIDTH = Number.parseInt(process.env.DIAGRAM_WIDTH ?? "3840", 10);
-const OUTPUT_HEIGHT = Number.parseInt(process.env.DIAGRAM_HEIGHT ?? "2160", 10);
+const OUTPUT_WIDTH = Number.parseInt(process.env.DIAGRAM_WIDTH ?? "1920", 10);
+const OUTPUT_HEIGHT = Number.parseInt(process.env.DIAGRAM_HEIGHT ?? "1080", 10);
 const OUTPUT_DPR = Number.parseFloat(process.env.DIAGRAM_DPR ?? "1");
 
 function contentTypeFor(filePath) {
@@ -248,12 +248,12 @@ async function main() {
           // eslint-disable-next-line no-undef
           const rawSvg = structurizr.diagram.exportCurrentDiagramToSVG(false);
           const BG = "#05060A";
-          const pad = Math.max(48, Math.round(outputWidth * 0.03125)); // ~120 at 3840px
-          const headerH = Math.max(200, Math.round(outputHeight * 0.13)); // ~280 at 2160px
-          const cropMargin = Math.max(60, Math.round(outputWidth * 0.0208)); // ~80 at 3840px
-          const titleSize = Math.max(44, Math.round(outputHeight * 0.030)); // ~65 at 2160px
-          const subtitleSize = Math.max(22, Math.round(outputHeight * 0.013)); // ~28 at 2160px
-          const logoH = Math.max(48, Math.round(outputHeight * 0.033)); // ~71 at 2160px
+          const pad = Math.max(30, Math.round(outputWidth * 0.028));
+          const headerH = Math.max(140, Math.round(outputHeight * 0.13));
+          const cropMargin = Math.max(44, Math.round(outputWidth * 0.016));
+          const titleSize = Math.max(34, Math.round(outputHeight * 0.040));
+          const subtitleSize = Math.max(17, Math.round(outputHeight * 0.017));
+          const logoH = Math.max(68, Math.round(outputHeight * 0.062));
 
           const root = document.createElement("div");
           root.id = "opencode-export-root";
@@ -265,10 +265,10 @@ async function main() {
 
           const header = document.createElement("div");
           header.style.cssText =
-            `height: ${headerH}px; padding: ${Math.round(headerH * 0.24)}px ${pad}px ${Math.round(
-              headerH * 0.18
+            `height: ${headerH}px; padding: ${Math.round(headerH * 0.18)}px ${pad}px ${Math.round(
+              headerH * 0.14
             )}px ${pad}px;` +
-            " display: flex; align-items: flex-end; justify-content: space-between; gap: 56px;" +
+            " display: flex; align-items: center; justify-content: flex-start; gap: 28px;" +
             ` background: radial-gradient(1100px 260px at 0% 0%, rgba(56,189,248,0.16) 0%, rgba(5,6,10,0) 55%),` +
             ` radial-gradient(900px 240px at 100% 0%, rgba(245,158,11,0.12) 0%, rgba(5,6,10,0) 60%), ${BG};` +
             " border-bottom: 1px solid rgba(148,163,184,0.18);" +
@@ -280,8 +280,18 @@ async function main() {
             " background: linear-gradient(90deg, #38BDF8 0%, #0F766E 45%, #F59E0B 100%);";
           header.appendChild(accent);
 
+          const brand = document.createElement("div");
+          brand.style.cssText = "display: flex; align-items: center; gap: 22px; min-width: 0;";
+
+          const logoImg = document.createElement("img");
+          logoImg.src = logo;
+          logoImg.alt = "Sunnyview";
+          logoImg.style.cssText =
+            `height: ${logoH}px; width: auto; flex: 0 0 auto;` +
+            " filter: invert(1) brightness(1.08); opacity: 0.95;";
+
           const left = document.createElement("div");
-          left.style.cssText = "flex: 1 1 auto; min-width: 0;";
+          left.style.cssText = "display: flex; flex-direction: column; min-width: 0;";
 
           const h1 = document.createElement("div");
           h1.textContent = title;
@@ -299,15 +309,9 @@ async function main() {
             left.appendChild(h2);
           }
 
-          const logoImg = document.createElement("img");
-          logoImg.src = logo;
-          logoImg.alt = "Sunnyview";
-          logoImg.style.cssText =
-            `height: ${logoH}px; width: auto; flex: 0 0 auto;` +
-            " filter: invert(1) brightness(1.08); opacity: 0.95;";
-
-          header.appendChild(left);
-          header.appendChild(logoImg);
+          brand.appendChild(logoImg);
+          brand.appendChild(left);
+          header.appendChild(brand);
 
           const body = document.createElement("div");
           body.style.cssText =
@@ -333,6 +337,28 @@ async function main() {
           svg.style.display = "block";
           svg.style.maxWidth = "none";
           svg.style.background = BG;
+
+          // Relationship label boxes are rendered using the diagram canvas colour
+          // (white in light mode). The exported SVG has its class attributes stripped,
+          // so we detect "white" rect fills and re-skin them.
+          svg.querySelectorAll("rect").forEach((rect) => {
+            const fill = (rect.getAttribute("fill") ?? "").replace(/\s+/g, "").toLowerCase();
+            const isWhite =
+              fill === "#fff" ||
+              fill === "#ffffff" ||
+              fill === "white" ||
+              fill === "rgb(255,255,255)" ||
+              fill === "rgba(255,255,255,1)";
+
+            if (!isWhite) return;
+
+            rect.setAttribute("fill", BG);
+            rect.setAttribute("fill-opacity", "0.92");
+            rect.setAttribute("stroke", "rgba(148,163,184,0.18)");
+            rect.setAttribute("stroke-width", "1");
+            rect.setAttribute("rx", "10");
+            rect.setAttribute("ry", "10");
+          });
 
           // Hide any diagram metadata that may have been exported (title/description/logo).
           svg.querySelectorAll(".structurizrMetadata").forEach((el) => {

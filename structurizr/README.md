@@ -27,10 +27,10 @@ Then open `structurizr/out/index.html` in a browser and use the diagram picker /
 npm run diagrams:export
 ```
 
-By default this generates 16:9 PNGs at `3840x2160`. You can override via:
+By default this generates 16:9 PNGs at `1920x1080`. You can override via:
 
 ```bash
-DIAGRAM_WIDTH=1920 DIAGRAM_HEIGHT=1080 npm run diagrams:export
+DIAGRAM_WIDTH=2560 DIAGRAM_HEIGHT=1440 npm run diagrams:export
 ```
 
 Outputs:

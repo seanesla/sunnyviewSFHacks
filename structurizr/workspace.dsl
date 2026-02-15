@@ -1,7 +1,7 @@
 workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
 
     model {
-        user = person "Homeowner / Judge" "Traces a roof and gets quick panel, energy, and CO2 estimates."
+        user = person "Homeowner" "Traces a roof and gets quick panel, energy, and CO2 estimates."
 
         sunnyview = softwareSystem "Sunnyview" "Fast rooftop solar feasibility demo." "Internal" {
             group "Client" {
@@ -26,28 +26,28 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             externalBackend = softwareSystem "Sunnyview Backend" "Optional separate backend for project CRUD and share snapshots." "External,Optional"
         }
 
-        user -> web "Uses" "Browser"
+        user -> web "Uses"
 
-        web -> api "Calls /api/* route handlers" "HTTPS (JSON)"
-        web -> externalBackend "Optional: calls /api/projects and /s/:shareSlug" "HTTPS (JSON)" {
+        web -> api "Calls /api/*"
+        web -> externalBackend "Optional: projects + share" {
             tags "Optional"
         }
 
-        api -> geoApis "Geocode, imagery, and footprints" "HTTPS"
-        api -> segmenter "POST /api/segment (CV auto-outline)" "HTTP" {
+        api -> geoApis "Geocode + imagery + footprints"
+        api -> segmenter "Optional: CV auto-outline" {
             tags "Optional"
         }
 
-        api -> solarWeatherApis "Estimates + forecast" "HTTPS"
-        api -> aiVoiceApis "Recommendations + narration" "HTTPS" {
+        api -> solarWeatherApis "Estimate + forecast"
+        api -> aiVoiceApis "Recommendations + narration" {
             tags "Optional"
         }
 
-        api -> mongo "Reads/writes history" "MongoDB" {
+        api -> mongo "Optional: history snapshots" {
             tags "Optional"
         }
 
-        api -> redis "Caches PVWatts results" "Redis" {
+        api -> redis "Optional: PVWatts cache" {
             tags "Optional"
         }
     }
@@ -60,48 +60,26 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
         container sunnyview "general-architecture" {
             title "SUNNYVIEW / GENERAL ARCHITECTURE"
             include *
-            autolayout tb 220 140
+            properties {
+                "structurizr.boundaryPadding" "8"
+            }
+            autolayout tb 150 120
         }
 
         dynamic sunnyview "main-feature" "Trace roof -> panel layout -> estimate" {
             title "SUNNYVIEW / MAIN FEATURE: TRACE ROOF -> ESTIMATE"
 
-            1: user -> web "Enter address"
-            2: web -> api "GET /api/geocode (suggest)"
-            3: api -> arcgisGeocode "Suggest/Find (primary)"
-            4: api -> nominatim "Fallback search"
+            1: user -> web "Trace roof; web packs panels"
+            2: web -> api "Call /api/*"
+            3: api -> geoApis "Geocode + imagery + footprints"
+            4: api -> solarWeatherApis "Estimate + forecast"
+            5: api -> segmenter "Optional CV outline"
+            6: api -> aiVoiceApis "Optional AI + TTS"
 
-            5: web -> api "GET /api/geocode (lookup)"
-            6: api -> arcgisGeocode "Lookup candidates"
-
-            7: web -> api "GET /api/static-map"
-            8: api -> arcgisImagery "Export image"
-            9: api -> mapboxStatic "Fallback image (optional)"
-
-            10: user -> web "Trace roof polygon"
-            11: web -> api "POST /api/segment (optional)"
-            12: api -> segmenter "CV outline (optional)"
-            13: api -> overpass "Footprint fallback"
-
-            14: user -> web "Tune assumptions"
-            15: web -> api "POST /api/estimate"
-            16: api -> redis "Read cache (optional)"
-            17: api -> pvwatts "PVWatts (if needed)"
-            18: api -> redis "Write cache (optional)"
-
-            19: web -> api "GET /api/forecast (optional)"
-            20: api -> openMeteo "Forecast + archive"
-
-            21: web -> api "POST /api/history (optional)"
-            22: api -> mongo "Upsert snapshot (optional)"
-
-            23: web -> api "POST /api/panel-recommend (optional)"
-            24: api -> gemini "Generate recommendation (optional)"
-
-            25: web -> api "POST /api/tts (optional)"
-            26: api -> elevenlabs "Text-to-speech (optional)"
-
-            autolayout tb 170 120
+            properties {
+                "structurizr.boundaryPadding" "8"
+            }
+            autolayout lr 140 90
         }
 
         styles {
@@ -111,7 +89,9 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
                 color #E2E8F0
                 stroke #334155
                 strokeWidth 2
-                fontSize 26
+                fontSize 36
+                description false
+                metadata false
             }
 
             element "Boundary" {
@@ -130,29 +110,36 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             }
 
             element "Person" {
-                shape Person
+                shape RoundedBox
                 background #0B1220
                 color #F8FAFC
                 stroke #38BDF8
-                strokeWidth 2
+                strokeWidth 3
             }
 
             element "Web" {
                 shape WebBrowser
-                background #2563EB
+                background #0B1220
                 color #F8FAFC
+                stroke #38BDF8
+                strokeWidth 3
             }
 
             element "API" {
                 shape Hexagon
-                background #0F766E
+                background #0B1220
                 color #F8FAFC
+                stroke #38BDF8
+                strokeWidth 3
             }
 
             element "ML" {
                 shape RoundedBox
-                background #B45309
+                background #0B1220
                 color #F8FAFC
+                stroke #F59E0B
+                strokeWidth 3
+                border Dashed
             }
 
             element "Database" {
@@ -160,15 +147,15 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
                 background #0B1220
                 color #F8FAFC
                 stroke #F59E0B
-                strokeWidth 2
+                strokeWidth 3
             }
 
             element "Cache" {
                 shape Cylinder
                 background #0B1220
                 color #F8FAFC
-                stroke #38BDF8
-                strokeWidth 2
+                stroke #F59E0B
+                strokeWidth 3
             }
 
             element "External" {
@@ -180,14 +167,17 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             }
 
             element "Optional" {
-                opacity 70
+                opacity 78
+                stroke #F59E0B
+                strokeWidth 3
+                border Dashed
             }
 
             relationship "Relationship" {
-                thickness 2
+                thickness 5
                 color #94A3B8
                 routing Orthogonal
-                fontSize 18
+                fontSize 1
             }
 
             relationship "Optional" {
