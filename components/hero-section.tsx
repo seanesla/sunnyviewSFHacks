@@ -1,229 +1,54 @@
 "use client"
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { ArrowRight } from "lucide-react"
+import { ArrowRight, PlugZap, Sparkles } from "lucide-react"
 import { gsap } from "gsap"
+
 import { AccentColorControl } from "@/components/accent-color-control"
 import { LogoPlate } from "@/components/logo-plate"
 import { ScrambleText } from "@/components/ScrambleText"
+import { cn } from "@/lib/utils"
+
+type IntegrationStatus = "off" | "checking" | "ready" | "invalid"
 
 interface HeroSectionProps {
   onStart: () => void
+  onOpenIntegrations: () => void
   visible: boolean
+  geminiStatus: IntegrationStatus
+  voiceStatus: "off" | "ready"
 }
 
-export function HeroSection({ onStart, visible }: HeroSectionProps) {
+function integrationChipText(label: "Gemini" | "Voice", status: IntegrationStatus | "ready" | "off") {
+  if (status === "ready") return `${label}: Ready`
+  if (status === "checking") return `${label}: Checking`
+  if (status === "invalid") return `${label}: Invalid`
+  return `${label}: Off`
+}
+
+function integrationChipClass(status: IntegrationStatus | "ready" | "off") {
+  if (status === "ready") {
+    return "border-emerald-400/35 bg-emerald-500/12 text-emerald-200"
+  }
+  if (status === "checking") {
+    return "border-amber-400/35 bg-amber-500/12 text-amber-200"
+  }
+  if (status === "invalid") {
+    return "border-rose-400/35 bg-rose-500/12 text-rose-200"
+  }
+  return "border-border/70 bg-background/45 text-muted-foreground"
+}
+
+export function HeroSection({
+  onStart,
+  onOpenIntegrations,
+  visible,
+  geminiStatus,
+  voiceStatus,
+}: HeroSectionProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [showAccentPicker, setShowAccentPicker] = useState(false)
   const [showLogoHint, setShowLogoHint] = useState(false)
-  const [geminiKey, setGeminiKey] = useState("")
-  const [showGeminiKey, setShowGeminiKey] = useState(false)
-
-  const [elevenLabsKey, setElevenLabsKey] = useState("")
-  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState("")
-  const [showElevenLabsKey, setShowElevenLabsKey] = useState(false)
-
-  const [geminiOnlineKey, setGeminiOnlineKey] = useState<string | null>(null)
-  const [geminiOnlineOk, setGeminiOnlineOk] = useState<boolean | null>(null)
-  const validateAbortRef = useRef<AbortController | null>(null)
-
-  const [elevenLabsOnlineKey, setElevenLabsOnlineKey] = useState<string | null>(null)
-  const [elevenLabsOnlineOk, setElevenLabsOnlineOk] = useState<boolean | null>(null)
-  const elevenValidateAbortRef = useRef<AbortController | null>(null)
-  const [geminiEnvLoaded, setGeminiEnvLoaded] = useState<boolean | null>(null)
-  const [elevenEnvLoaded, setElevenEnvLoaded] = useState<boolean | null>(null)
-  const [elevenVoiceEnvLoaded, setElevenVoiceEnvLoaded] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    const geminiStorageKey = "sunnyview-gemini-api-key-v1"
-    const elevenStorageKey = "sunnyview-elevenlabs-api-key-v1"
-    const elevenVoiceStorageKey = "sunnyview-elevenlabs-voice-id-v1"
-    let cancelled = false
-    const t = window.setTimeout(() => {
-      if (cancelled) return
-      try {
-        const g = window.localStorage.getItem(geminiStorageKey)
-        if (g) setGeminiKey(g)
-        const e = window.localStorage.getItem(elevenStorageKey)
-        if (e) setElevenLabsKey(e)
-        const v = window.localStorage.getItem(elevenVoiceStorageKey)
-        if (v) setElevenLabsVoiceId(v)
-      } catch {
-        // ignore
-      }
-    }, 0)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(t)
-    }
-  }, [])
-
-  useEffect(() => {
-    const ac = new AbortController()
-
-    ;(async () => {
-      try {
-        const [geminiRes, elevenRes] = await Promise.all([
-          fetch("/api/gemini-validate", {
-            method: "POST",
-            signal: ac.signal,
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({}),
-          }),
-          fetch("/api/elevenlabs-validate", {
-            method: "POST",
-            signal: ac.signal,
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({}),
-          }),
-        ])
-
-        const geminiData = (await geminiRes.json().catch(() => null)) as any
-        const elevenData = (await elevenRes.json().catch(() => null)) as any
-        if (ac.signal.aborted) return
-
-        if (typeof geminiData?.envLoaded === "boolean") {
-          setGeminiEnvLoaded(geminiData.envLoaded)
-        }
-        if (typeof elevenData?.envLoaded === "boolean") {
-          setElevenEnvLoaded(elevenData.envLoaded)
-        }
-        if (typeof elevenData?.voiceEnvLoaded === "boolean") {
-          setElevenVoiceEnvLoaded(elevenData.voiceEnvLoaded)
-        }
-      } catch {
-        if (ac.signal.aborted) return
-      }
-    })()
-
-    return () => ac.abort()
-  }, [])
-
-  useEffect(() => {
-    const k = "sunnyview-gemini-api-key-v1"
-    const t = window.setTimeout(() => {
-      try {
-        if (geminiKey.trim().length === 0) window.localStorage.removeItem(k)
-        else window.localStorage.setItem(k, geminiKey)
-      } catch {
-        // ignore
-      }
-    }, 120)
-    return () => window.clearTimeout(t)
-  }, [geminiKey])
-
-  useEffect(() => {
-    const k = "sunnyview-elevenlabs-api-key-v1"
-    const t = window.setTimeout(() => {
-      try {
-        if (elevenLabsKey.trim().length === 0) window.localStorage.removeItem(k)
-        else window.localStorage.setItem(k, elevenLabsKey)
-      } catch {
-        // ignore
-      }
-    }, 120)
-    return () => window.clearTimeout(t)
-  }, [elevenLabsKey])
-
-  useEffect(() => {
-    const k = "sunnyview-elevenlabs-voice-id-v1"
-    const t = window.setTimeout(() => {
-      try {
-        if (elevenLabsVoiceId.trim().length === 0) window.localStorage.removeItem(k)
-        else window.localStorage.setItem(k, elevenLabsVoiceId)
-      } catch {
-        // ignore
-      }
-    }, 120)
-    return () => window.clearTimeout(t)
-  }, [elevenLabsVoiceId])
-
-  useEffect(() => {
-    const raw = geminiKey.trim()
-    validateAbortRef.current?.abort()
-
-    if (!raw) return
-    if (!/^[A-Za-z0-9._-]{20,}$/.test(raw)) return
-
-    const ac = new AbortController()
-    validateAbortRef.current = ac
-
-    const t = window.setTimeout(async () => {
-      try {
-        const res = await fetch("/api/gemini-validate", {
-          method: "POST",
-          signal: ac.signal,
-          headers: {
-            "content-type": "application/json",
-            "x-gemini-api-key": raw,
-          },
-          body: JSON.stringify({}),
-        })
-        const data = (await res.json().catch(() => null)) as any
-        if (ac.signal.aborted) return
-        if (typeof data?.envLoaded === "boolean") {
-          setGeminiEnvLoaded(data.envLoaded)
-        }
-        setGeminiOnlineKey(raw)
-        setGeminiOnlineOk(data?.ok === true)
-      } catch {
-        if (ac.signal.aborted) return
-        setGeminiOnlineKey(raw)
-        setGeminiOnlineOk(false)
-      }
-    }, 260)
-
-    return () => {
-      window.clearTimeout(t)
-      ac.abort()
-    }
-  }, [geminiKey])
-
-  useEffect(() => {
-    const raw = elevenLabsKey.trim()
-    elevenValidateAbortRef.current?.abort()
-
-    if (!raw) return
-    if (raw.length < 20) return
-    if (/\s/.test(raw)) return
-
-    const ac = new AbortController()
-    elevenValidateAbortRef.current = ac
-
-    const t = window.setTimeout(async () => {
-      try {
-        const res = await fetch("/api/elevenlabs-validate", {
-          method: "POST",
-          signal: ac.signal,
-          headers: {
-            "content-type": "application/json",
-            "x-elevenlabs-api-key": raw,
-          },
-          body: JSON.stringify({}),
-        })
-        const data = (await res.json().catch(() => null)) as any
-        if (ac.signal.aborted) return
-        if (typeof data?.envLoaded === "boolean") {
-          setElevenEnvLoaded(data.envLoaded)
-        }
-        if (typeof data?.voiceEnvLoaded === "boolean") {
-          setElevenVoiceEnvLoaded(data.voiceEnvLoaded)
-        }
-        setElevenLabsOnlineKey(raw)
-        setElevenLabsOnlineOk(data?.ok === true)
-      } catch {
-        if (ac.signal.aborted) return
-        setElevenLabsOnlineKey(raw)
-        setElevenLabsOnlineOk(false)
-      }
-    }, 260)
-
-    return () => {
-      window.clearTimeout(t)
-      ac.abort()
-    }
-  }, [elevenLabsKey])
 
   useEffect(() => {
     if (!visible) {
@@ -255,73 +80,20 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
     setShowAccentPicker((prev) => !prev)
   }
 
-  const rawGeminiKey = geminiKey.trim()
-  const geminiFormatOk = rawGeminiKey.length > 0 && /^[A-Za-z0-9._-]{20,}$/.test(rawGeminiKey)
-  const geminiKeyState: "idle" | "checking" | "valid" | "invalid" =
-    rawGeminiKey.length === 0
-      ? "idle"
-      : !geminiFormatOk
-        ? "invalid"
-        : geminiOnlineKey === rawGeminiKey
-          ? geminiOnlineOk
-            ? "valid"
-            : "invalid"
-          : "checking"
-
-  const rawElevenLabsKey = elevenLabsKey.trim()
-  const elevenLabsFormatOk = rawElevenLabsKey.length >= 20 && !/\s/.test(rawElevenLabsKey)
-  const elevenLabsKeyState: "idle" | "checking" | "valid" | "invalid" =
-    rawElevenLabsKey.length === 0
-      ? "idle"
-      : !elevenLabsFormatOk
-        ? "invalid"
-        : elevenLabsOnlineKey === rawElevenLabsKey
-          ? elevenLabsOnlineOk
-            ? "valid"
-            : "invalid"
-          : "checking"
-
-  const backendTarget =
-    (process.env.NEXT_PUBLIC_API_ORIGIN ?? "").trim().replace(/\/$/, "") ||
-    "same-origin /api (localhost in dev)"
-
-  const geminiEnvChipClass =
-    geminiEnvLoaded === true
-      ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-      : geminiEnvLoaded === false
-        ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
-        : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
-  const geminiEnvChipLabel =
-    geminiEnvLoaded === true ? "Env loaded" : geminiEnvLoaded === false ? "Env missing" : "Env unknown"
-
-  const elevenEnvChipClass =
-    elevenEnvLoaded === true
-      ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-      : elevenEnvLoaded === false
-        ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
-        : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
-  const elevenEnvChipLabel =
-    elevenEnvLoaded === true ? "Env loaded" : elevenEnvLoaded === false ? "Env missing" : "Env unknown"
-
   useLayoutEffect(() => {
     if (!visible) return
 
     const root = rootRef.current
     if (!root) return
 
-    const reduceMotion =
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false
     const q = gsap.utils.selector(root)
-    const listeners: Array<{
-      el: Element
-      enter: () => void
-      leave: () => void
-    }> = []
+    const listeners: Array<{ el: Element; enter: () => void; leave: () => void }> = []
 
-      const ctx = gsap.context(() => {
-        const staged = q(
-          "[data-motion='logo'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='gemini'], [data-motion='eleven']"
-        )
+    const ctx = gsap.context(() => {
+      const staged = q(
+        "[data-motion='logo'], [data-motion='eyebrow'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='chips']"
+      )
 
       if (!reduceMotion) {
         gsap.fromTo(
@@ -347,24 +119,11 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             delay: 1.4,
           })
         }
-
-        const accentLineEl = q("[data-motion='accent-line']")[0]
-        if (accentLineEl) {
-          gsap.to(accentLineEl, {
-            opacity: 0.96,
-            duration: 3.4,
-            ease: "sine.inOut",
-            repeat: -1,
-            yoyo: true,
-            delay: 1.25,
-          })
-        }
       }
 
       if (reduceMotion) return
 
-      const interactiveEls = q("[data-motion='cta']")
-
+      const interactiveEls = q("[data-motion='cta'], [data-motion='integrations-cta']")
       for (const el of interactiveEls) {
         const enter = () => {
           gsap.to(el, {
@@ -375,7 +134,6 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             overwrite: "auto",
           })
         }
-
         const leave = () => {
           gsap.to(el, {
             y: 0,
@@ -442,186 +200,67 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
           ) : null}
         </div>
 
+        <div
+          data-motion="eyebrow"
+          className="hero-landing__eyebrow inline-flex w-fit items-center gap-1.5 rounded-full border border-primary/40 bg-primary/12 px-2.5 py-1 text-[10px] font-semibold tracking-[0.14em] text-primary uppercase"
+        >
+          <Sparkles size={11} />
+          Instant Roof Insights
+        </div>
+
         <span className="text-sm font-light tracking-[0.2em] text-primary uppercase" data-motion="kicker">
           Solar Feasibility in 30 Seconds
         </span>
-        <h1 className="hero-landing__title text-balance text-[clamp(3rem,6.4vw,6rem)] font-extralight leading-[0.98] tracking-tight text-foreground" data-motion="headline">
-          <ScrambleText text="Trace" trigger={visible} /> <ScrambleText text="a" trigger={visible} /> <ScrambleText text="roof." trigger={visible} />
+
+        <h1
+          className="hero-landing__title text-balance text-[clamp(3rem,6.4vw,6rem)] font-extralight leading-[0.98] tracking-tight text-foreground"
+          data-motion="headline"
+        >
+          <ScrambleText text="Trace a roof." trigger={visible} />
           <br />
-          <span className="text-primary text-glow" data-motion="accent-line">
-            <ScrambleText text="See" trigger={visible} speed={45} /> <ScrambleText text="the" trigger={visible} speed={45} /> <ScrambleText text="potential." trigger={visible} speed={45} />
+          <span className="text-primary text-glow">
+            <ScrambleText text="See the potential." trigger={visible} speed={45} />
           </span>
         </h1>
       </div>
 
       <p className="hero-landing__copy max-w-[34ch] text-pretty leading-relaxed text-muted-foreground" data-motion="copy">
         Sunnyview turns any satellite view into an instant solar layout.
-        Draw a roof polygon, and watch panels fill in live with real energy
-        and CO2 estimates. No account needed.
+        Draw a roof polygon and watch panel count, kWh, and CO2 update in real time.
       </p>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center" data-motion="cta-row">
+      <div className="hero-landing__cta-row flex flex-col gap-2.5 sm:flex-row sm:items-center" data-motion="cta-row">
         <button
           onClick={onStart}
-          className="hero-cta-premium group flex h-11 items-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:gap-3 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-primary/20"
+          className="hero-cta-premium group inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/20"
           data-motion="cta"
         >
           Launch Demo
           <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" />
         </button>
-        <span className="hero-landing__cta-hint text-xs text-muted-foreground">
-          or click the Earth to begin
+
+        <button
+          type="button"
+          onClick={onOpenIntegrations}
+          className="hero-secondary-action inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-primary/45 bg-primary/12 px-4 text-xs font-semibold text-foreground transition hover:bg-primary/20"
+          data-motion="integrations-cta"
+        >
+          <PlugZap size={14} className="text-primary" />
+          Add API keys
+        </button>
+      </div>
+
+      <div className="hero-landing__chips flex flex-wrap gap-2" data-motion="chips">
+        <span className="hero-chip border-border/70 bg-background/45 text-muted-foreground">No account needed</span>
+        <span className="hero-chip border-border/70 bg-background/45 text-muted-foreground">~30s workflow</span>
+        <span className={cn("hero-chip", integrationChipClass(geminiStatus))}>
+          <Sparkles size={11} className="opacity-90" />
+          {integrationChipText("Gemini", geminiStatus)}
         </span>
-      </div>
-
-      <div className="hero-landing__keycard glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="gemini">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">Stored locally in this browser (localStorage). Format + live check.</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={geminiEnvChipClass}>{geminiEnvChipLabel}</div>
-            <div
-              className={
-                geminiKeyState === "valid"
-                  ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-                  : geminiKeyState === "checking"
-                    ? "rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"
-                    : geminiKeyState === "invalid"
-                      ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
-                      : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
-              }
-            >
-              {geminiKeyState === "valid"
-                ? "Valid"
-                : geminiKeyState === "checking"
-                  ? "Checking…"
-                  : geminiKeyState === "invalid"
-                    ? "Invalid"
-                    : "Optional"}
-            </div>
-            <button
-              type="button"
-              className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
-              onClick={() => setShowGeminiKey((v) => !v)}
-            >
-              {showGeminiKey ? "Hide" : "Show"}
-            </button>
-          </div>
-        </div>
-        <div className="mt-3">
-          <input
-            value={geminiKey}
-            onChange={(e) => setGeminiKey(e.target.value)}
-            type={showGeminiKey ? "text" : "password"}
-            placeholder="Paste your Gemini API key"
-            autoComplete="off"
-            spellCheck={false}
-            className={
-              "h-10 w-full rounded-lg border bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 " +
-              (geminiKeyState === "valid"
-                ? "border-emerald-400/55 focus-visible:ring-emerald-400/35"
-                : geminiKeyState === "invalid" && rawGeminiKey.length > 0
-                  ? "border-rose-400/55 focus-visible:ring-rose-400/35"
-                  : "border-input focus-visible:ring-primary/50")
-            }
-          />
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            Backend target: <span className="text-foreground">{backendTarget}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="hero-landing__keycard glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="eleven">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-xs font-semibold tracking-wide text-foreground uppercase">ElevenLabs API key</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">
-              Stored locally in this browser (localStorage). Format + live check. Only sent to same-origin `/api/tts`.
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={elevenEnvChipClass}>{elevenEnvChipLabel}</div>
-            <div
-              className={
-                elevenLabsKeyState === "valid"
-                  ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-                  : elevenLabsKeyState === "checking"
-                    ? "rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"
-                    : elevenLabsKeyState === "invalid"
-                      ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
-                      : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
-              }
-            >
-              {elevenLabsKeyState === "valid"
-                ? "Valid"
-                : elevenLabsKeyState === "checking"
-                  ? "Checking…"
-                  : elevenLabsKeyState === "invalid"
-                    ? "Invalid"
-                    : "Optional"}
-            </div>
-            <button
-              type="button"
-              className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
-              onClick={() => setShowElevenLabsKey((v) => !v)}
-            >
-              {showElevenLabsKey ? "Hide" : "Show"}
-            </button>
-          </div>
-        </div>
-        <div className="mt-3 grid gap-2">
-          <input
-            value={elevenLabsKey}
-            onChange={(e) => setElevenLabsKey(e.target.value)}
-            type={showElevenLabsKey ? "text" : "password"}
-            placeholder="Paste your ElevenLabs API key"
-            autoComplete="off"
-            spellCheck={false}
-            className={
-              "h-10 w-full rounded-lg border bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 " +
-              (elevenLabsKeyState === "valid"
-                ? "border-emerald-400/55 focus-visible:ring-emerald-400/35"
-                : elevenLabsKeyState === "invalid" && rawElevenLabsKey.length > 0
-                  ? "border-rose-400/55 focus-visible:ring-rose-400/35"
-                  : "border-input focus-visible:ring-primary/50")
-            }
-          />
-          <input
-            value={elevenLabsVoiceId}
-            onChange={(e) => setElevenLabsVoiceId(e.target.value)}
-            type="text"
-            placeholder="Voice ID (optional)"
-            autoComplete="off"
-            spellCheck={false}
-            className="h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-          />
-          <div className="text-xs text-muted-foreground">
-            Backend target: <span className="text-foreground">{backendTarget}</span>
-          </div>
-          <div className="text-[11px] text-muted-foreground">
-            Server voice env: {" "}
-            <span
-              className={
-                elevenVoiceEnvLoaded === true
-                  ? "text-emerald-200"
-                  : elevenVoiceEnvLoaded === false
-                    ? "text-rose-200"
-                    : "text-muted-foreground"
-              }
-            >
-              {elevenVoiceEnvLoaded === true
-                ? "Loaded"
-                : elevenVoiceEnvLoaded === false
-                  ? "Missing"
-                  : "Unknown"}
-            </span>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            If `NEXT_PUBLIC_API_ORIGIN` is set, this local key will not be sent. Configure ElevenLabs on that backend instead.
-          </div>
-        </div>
+        <span className={cn("hero-chip", integrationChipClass(voiceStatus))}>
+          <Sparkles size={11} className="opacity-90" />
+          {integrationChipText("Voice", voiceStatus)}
+        </span>
       </div>
     </div>
   )
