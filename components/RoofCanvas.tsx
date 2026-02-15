@@ -88,6 +88,20 @@ function pointInPolygon(p: Point, polygon: Point[]) {
   return inside
 }
 
+function bboxOf(points: Point[]) {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const p of points) {
+    minX = Math.min(minX, p.x)
+    minY = Math.min(minY, p.y)
+    maxX = Math.max(maxX, p.x)
+    maxY = Math.max(maxY, p.y)
+  }
+  return { minX, minY, maxX, maxY }
+}
+
 export function RoofCanvas({
   background,
   mPerPx,
@@ -134,6 +148,7 @@ export function RoofCanvas({
   const viewRef = useRef<{ zoom: number; panX: number; panY: number }>({ zoom: 1, panX: 0, panY: 0 })
   const [viewUi, setViewUi] = useState<{ zoom: number }>({ zoom: 1 })
   const panDragRef = useRef<{ pointerId: number; startClientX: number; startClientY: number; startPanX: number; startPanY: number } | null>(null)
+  const polyDragRef = useRef<{ pointerId: number; start: Point; startVertices: Point[] } | null>(null)
   const candidateDownRef = useRef<string | null>(null)
   const canvasMetricsRef = useRef<{ width: number; height: number; dpr: number }>({
     width: 0,
@@ -771,9 +786,18 @@ export function RoofCanvas({
         for (const c of candidatePolygons) {
           if (pointInPolygon(internal, c.polygon)) {
             candidateDownRef.current = c.id
-            break
+            return
           }
         }
+      }
+
+      if (tool === "polygon" && closed && vertices.length >= 3 && pointInPolygon(internal, vertices)) {
+        polyDragRef.current = {
+          pointerId: e.pointerId,
+          start: { x: internal.x, y: internal.y },
+          startVertices: vertices.map((v) => ({ x: v.x, y: v.y })),
+        }
+        return
       }
 
       // Default interaction: drag to pan the view (mask does not change).
@@ -786,7 +810,7 @@ export function RoofCanvas({
         startPanY: panY,
       }
     },
-    [candidatePolygons, mode, onClosedChange, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
+    [candidatePolygons, closed, mode, onClosedChange, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
   )
 
   const onPointerMove = useCallback(
@@ -805,6 +829,22 @@ export function RoofCanvas({
         const nextPanX = panDrag.startPanX + dx / (baseScale * z)
         const nextPanY = panDrag.startPanY + dy / (baseScale * z)
         setView({ zoom: z, panX: nextPanX, panY: nextPanY })
+        return
+      }
+
+      const polyDrag = polyDragRef.current
+      if (polyDrag && polyDrag.pointerId === e.pointerId) {
+        const rect = container.getBoundingClientRect()
+        const internal = toInternal(e.clientX - rect.left, e.clientY - rect.top, rect)
+        const dxRaw = internal.x - polyDrag.start.x
+        const dyRaw = internal.y - polyDrag.start.y
+        if (!movedRef.current && dxRaw * dxRaw + dyRaw * dyRaw > 9) movedRef.current = true
+
+        const bb = bboxOf(polyDrag.startVertices)
+        const dx = clamp(dxRaw, -bb.minX, internalSize.w - bb.maxX)
+        const dy = clamp(dyRaw, -bb.minY, internalSize.h - bb.maxY)
+        const next = polyDrag.startVertices.map((v) => ({ x: v.x + dx, y: v.y + dy }))
+        onVerticesChange?.(next)
         return
       }
 
@@ -846,6 +886,10 @@ export function RoofCanvas({
 
       if (panDragRef.current?.pointerId === e.pointerId) {
         panDragRef.current = null
+      }
+
+      if (polyDragRef.current?.pointerId === e.pointerId) {
+        polyDragRef.current = null
       }
 
       if (mode === "edit" && tool === "rectangle" && drawingRect && rectStart && rectEnd) {
@@ -962,7 +1006,7 @@ export function RoofCanvas({
         <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs text-muted-foreground">
               {background.kind === "image"
-                ? "Tip: drag to pan, scroll/trackpad to zoom. Double-click to add a point. Drag a point to move it. Triple-click to delete."
+                ? "Tip: drag inside the roof to move it; drag outside to pan; scroll/trackpad to zoom. Double-click to add a point. Drag a point to reshape. Triple-click to delete."
                 : background.kind === "osm"
                   ? "Map mode: OSM background."
                   : "Trace the usable roof polygon."}

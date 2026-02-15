@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ArrowRight } from "lucide-react"
 import { AccentColorControl } from "@/components/accent-color-control"
 import { LogoPlate } from "@/components/logo-plate"
@@ -17,16 +17,9 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
   const [geminiKey, setGeminiKey] = useState("")
   const [showGeminiKey, setShowGeminiKey] = useState(false)
 
-  const geminiKeyStatus = useMemo(() => {
-    const raw = geminiKey.trim()
-    if (raw.length === 0) return { state: "idle" as const }
-
-    // Format-only validation (instant): Gemini keys are typically URL-safe strings.
-    // We intentionally do not make any network call here.
-    const ok = /^[A-Za-z0-9._-]{20,}$/.test(raw)
-    if (ok) return { state: "valid" as const }
-    return { state: "invalid" as const, message: "Key format looks off" }
-  }, [geminiKey])
+  const [geminiOnlineKey, setGeminiOnlineKey] = useState<string | null>(null)
+  const [geminiOnlineOk, setGeminiOnlineOk] = useState<boolean | null>(null)
+  const validateAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     const k = "sunnyview-gemini-api-key-v1"
@@ -61,6 +54,44 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
   }, [geminiKey])
 
   useEffect(() => {
+    const raw = geminiKey.trim()
+    validateAbortRef.current?.abort()
+
+    if (!raw) return
+    if (!/^[A-Za-z0-9._-]{20,}$/.test(raw)) return
+
+    const ac = new AbortController()
+    validateAbortRef.current = ac
+
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await fetch("/api/gemini-validate", {
+          method: "POST",
+          signal: ac.signal,
+          headers: {
+            "content-type": "application/json",
+            "x-gemini-api-key": raw,
+          },
+          body: JSON.stringify({}),
+        })
+        const data = (await res.json().catch(() => null)) as any
+        if (ac.signal.aborted) return
+        setGeminiOnlineKey(raw)
+        setGeminiOnlineOk(data?.ok === true)
+      } catch {
+        if (ac.signal.aborted) return
+        setGeminiOnlineKey(raw)
+        setGeminiOnlineOk(false)
+      }
+    }, 260)
+
+    return () => {
+      window.clearTimeout(t)
+      ac.abort()
+    }
+  }, [geminiKey])
+
+  useEffect(() => {
     if (!visible) {
       const resetTimer = window.setTimeout(() => {
         setShowAccentPicker(false)
@@ -89,6 +120,19 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
     setShowLogoHint(false)
     setShowAccentPicker((prev) => !prev)
   }
+
+  const rawGeminiKey = geminiKey.trim()
+  const geminiFormatOk = rawGeminiKey.length > 0 && /^[A-Za-z0-9._-]{20,}$/.test(rawGeminiKey)
+  const geminiKeyState: "idle" | "checking" | "valid" | "invalid" =
+    rawGeminiKey.length === 0
+      ? "idle"
+      : !geminiFormatOk
+        ? "invalid"
+        : geminiOnlineKey === rawGeminiKey
+          ? geminiOnlineOk
+            ? "valid"
+            : "invalid"
+          : "checking"
 
   return (
     <div
@@ -157,54 +201,58 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         </span>
       </div>
 
-        <div className="glass-card gradient-border rounded-xl p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="glass-card gradient-border rounded-lg p-3">
+          <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
-              <div className="mt-1 text-xs text-muted-foreground">Stored locally in this browser (localStorage). Format check only.</div>
+              <div className="text-[11px] font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">Stored locally. Status shows only Valid/Invalid.</div>
             </div>
             <div className="flex items-center gap-2">
-              <div
-                className={
-                  geminiKeyStatus.state === "valid"
-                    ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
-                    : geminiKeyStatus.state === "invalid"
-                      ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
-                      : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
-                }
+              {geminiKeyState === "checking" ? (
+                <div className="rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+                  Checking…
+                </div>
+              ) : null}
+              {geminiKeyState === "valid" || geminiKeyState === "invalid" ? (
+                <div
+                  className={
+                    geminiKeyState === "valid"
+                      ? "rounded-md border border-emerald-400/35 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                      : "rounded-md border border-rose-400/35 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
+                  }
+                >
+                  {geminiKeyState === "valid" ? "Valid" : "Invalid"}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+                onClick={() => setShowGeminiKey((v) => !v)}
               >
-                {geminiKeyStatus.state === "valid"
-                  ? "Looks valid"
-                  : geminiKeyStatus.state === "invalid"
-                    ? "Invalid"
-                    : "Optional"}
-              </div>
-            <button
-              type="button"
-              className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
-              onClick={() => setShowGeminiKey((v) => !v)}
-            >
-              {showGeminiKey ? "Hide" : "Show"}
-            </button>
+                {showGeminiKey ? "Hide" : "Show"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-2">
+            <input
+              value={geminiKey}
+              onChange={(e) => setGeminiKey(e.target.value)}
+              type={showGeminiKey ? "text" : "password"}
+              placeholder="Paste your Gemini API key"
+              autoComplete="off"
+              spellCheck={false}
+              className={
+                "h-10 w-full rounded-lg border bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 " +
+                (geminiKeyState === "valid"
+                  ? "border-emerald-400/55 focus-visible:ring-emerald-400/35"
+                  : geminiKeyState === "invalid" && geminiKey.trim().length > 0
+                    ? "border-rose-400/55 focus-visible:ring-rose-400/35"
+                    : "border-input focus-visible:ring-primary/50")
+              }
+            />
           </div>
         </div>
-        <div className="mt-3">
-          <input
-            value={geminiKey}
-            onChange={(e) => setGeminiKey(e.target.value)}
-            type={showGeminiKey ? "text" : "password"}
-            placeholder="Paste your Gemini API key"
-            autoComplete="off"
-            spellCheck={false}
-            className="h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-          />
-        </div>
-        {geminiKeyStatus.state === "invalid" ? (
-          <div className="mt-2 text-[11px] text-rose-200/90">
-            {geminiKeyStatus.message}
-          </div>
-        ) : null}
-      </div>
 
       {/* preview cards */}
       <div className="mt-4 flex gap-3">
