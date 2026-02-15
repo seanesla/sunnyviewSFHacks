@@ -74,8 +74,6 @@ export function MapInput({
   const [geoOptions, setGeoOptions] = useState<GeoOption[]>([])
   const geoAbortRef = useRef<AbortController | null>(null)
   const suggestAbortRef = useRef<AbortController | null>(null)
-  const [biasLat, setBiasLat] = useState<number | null>(null)
-  const [biasLng, setBiasLng] = useState<number | null>(null)
   const [focused, setFocused] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const lastCenterRef = useRef<{ lat: number; lng: number } | null>(
@@ -85,9 +83,18 @@ export function MapInput({
   useEffect(() => {
     if (value.lat === null || value.lng === null) return
     lastCenterRef.current = { lat: value.lat, lng: value.lng }
-    setBiasLat(value.lat)
-    setBiasLng(value.lng)
   }, [value.lat, value.lng])
+
+  const reverseGeocode = useCallback(async (lat: number, lng: number) => {
+    const url = new URL("/api/reverse-geocode", window.location.origin)
+    url.searchParams.set("lat", String(lat))
+    url.searchParams.set("lng", String(lng))
+    const res = await fetch(url.toString(), { headers: { accept: "application/json" } })
+    if (!res.ok) return null
+    const data = (await res.json().catch(() => null)) as any
+    const displayName = typeof data?.displayName === "string" ? data.displayName.trim() : ""
+    return displayName.length ? displayName : null
+  }, [])
 
   const emit = useCallback(
     (next: { address: string; lat: number | null; lng: number | null; zoom: number }) => {
@@ -142,8 +149,6 @@ export function MapInput({
       if (opt.lat !== null && opt.lng !== null) {
         setSelectedId(opt.id)
         lastCenterRef.current = { lat: opt.lat, lng: opt.lng }
-        setBiasLat(opt.lat)
-        setBiasLng(opt.lng)
         emit({ address: opt.displayName, lat: opt.lat, lng: opt.lng, zoom })
         return
       }
@@ -158,8 +163,6 @@ export function MapInput({
         const resolved = await resolveMagicKey(opt.displayName, opt.magicKey)
         setSelectedId(resolved.id)
         lastCenterRef.current = { lat: resolved.lat, lng: resolved.lng }
-        setBiasLat(resolved.lat)
-        setBiasLng(resolved.lng)
         emit({ address: resolved.displayName, lat: resolved.lat, lng: resolved.lng, zoom })
       } catch (e) {
         setGeoError(e instanceof Error ? e.message : "Address lookup failed.")
@@ -191,7 +194,7 @@ export function MapInput({
       url.searchParams.set("mode", "lookup")
       url.searchParams.set("q", q)
       url.searchParams.set("limit", "15")
-      const bias = biasLat !== null && biasLng !== null ? { lat: biasLat, lng: biasLng } : lastCenterRef.current
+      const bias = lastCenterRef.current
       if (bias) {
         url.searchParams.set("biasLat", String(bias.lat))
         url.searchParams.set("biasLng", String(bias.lng))
@@ -232,7 +235,7 @@ export function MapInput({
     } finally {
       setGeoBusy(false)
     }
-  }, [address, biasLat, biasLng, chooseOption, foundLat, foundLng])
+  }, [address, chooseOption, foundLat, foundLng])
 
   useEffect(() => {
     const q = address.trim()
@@ -256,7 +259,7 @@ export function MapInput({
         url.searchParams.set("mode", "suggest")
         url.searchParams.set("q", q)
         url.searchParams.set("limit", "15")
-        const bias = biasLat !== null && biasLng !== null ? { lat: biasLat, lng: biasLng } : lastCenterRef.current
+        const bias = lastCenterRef.current
         if (bias) {
           url.searchParams.set("biasLat", String(bias.lat))
           url.searchParams.set("biasLng", String(bias.lng))
@@ -288,7 +291,7 @@ export function MapInput({
       window.clearTimeout(t)
       ac.abort()
     }
-  }, [address, biasLat, biasLng])
+  }, [address])
 
   const computedMPerPx = useMemo(() => {
     if (foundLat === null || !Number.isFinite(foundLat)) return null
@@ -408,32 +411,45 @@ export function MapInput({
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="glass-surface rounded-md px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-background/60"
+            className="glass-surface rounded-md px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-background/60 disabled:opacity-50"
+            disabled={geoBusy}
             onClick={async () => {
               if (!navigator?.geolocation) {
                 setGeoError("Geolocation not supported in this browser.")
                 return
               }
+
               setGeoError(null)
+              setGeoWarning(null)
+              setGeoBusy(true)
               try {
                 const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
                   navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 8000 })
                 })
-                setBiasLat(pos.coords.latitude)
-                setBiasLng(pos.coords.longitude)
+                const lat = pos.coords.latitude
+                const lng = pos.coords.longitude
+
+                let label: string | null = null
+                try {
+                  label = await reverseGeocode(lat, lng)
+                } catch {
+                  label = null
+                }
+
+                setSelectedId(`gps:${lng.toFixed(6)},${lat.toFixed(6)}`)
+                lastCenterRef.current = { lat, lng }
+                setGeoOptions([])
+                setExpanded(false)
+                emit({ address: label ?? "Current location", lat, lng, zoom })
               } catch {
                 setGeoError("Could not access your location (permission denied or timed out).")
+              } finally {
+                setGeoBusy(false)
               }
             }}
           >
-            Use my location to improve matches
+            Use my location
           </button>
-          {biasLat !== null && biasLng !== null && (
-            <div className="text-[11px] text-muted-foreground">
-              Bias on: <span className="text-foreground">{formatNum(biasLat, 3)}</span>,{" "}
-              <span className="text-foreground">{formatNum(biasLng, 3)}</span>
-            </div>
-          )}
         </div>
 
         {geoOptions.length > 0 && selectedId === null && !focused && (
@@ -463,7 +479,7 @@ export function MapInput({
           </div>
         )}
 
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div className="mt-3">
           <div className="glass-surface rounded-md px-3 py-2 text-xs text-muted-foreground">
             <div>
               lat: <span className="text-foreground">{formatNum(foundLat, 6)}</span>
@@ -477,23 +493,6 @@ export function MapInput({
             <div className="mt-1">
               m/px: <span className="text-foreground">{computedMPerPx ? computedMPerPx.toExponential(3) : "—"}</span>
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-xs text-muted-foreground">Zoom (OSM background uses integer zoom)</label>
-            <input
-              type="range"
-              min={14}
-              max={21}
-              step={1}
-              value={zoom}
-              onChange={(e) => {
-                const nextZoom = Number(e.target.value)
-                emit({ address, lat: foundLat, lng: foundLng, zoom: nextZoom })
-              }}
-              className="w-full"
-            />
-            <div className="text-xs text-muted-foreground">Adjust zoom if the roof looks too large or too small.</div>
           </div>
         </div>
       </div>
