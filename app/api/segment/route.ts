@@ -154,21 +154,75 @@ function isLikelyUrl(s: string) {
   return /^https?:\/\//i.test(s) || s.startsWith("/")
 }
 
+function extractGeojsonRingNorm(poly: unknown): Array<[number, number]> | null {
+  if (!poly || typeof poly !== "object") return null
+
+  const obj = poly as any
+  if (obj?.type === "Feature" && obj?.geometry) return extractGeojsonRingNorm(obj.geometry)
+
+  const typ = typeof obj?.type === "string" ? String(obj.type) : null
+  const coords = obj?.coordinates
+  if (!Array.isArray(coords)) return null
+
+  let ring: unknown[] | null = null
+  if (typ === "Polygon" && Array.isArray(coords[0])) ring = coords[0] as unknown[]
+  else if (typ === "MultiPolygon" && Array.isArray(coords[0]) && Array.isArray((coords[0] as any)[0])) {
+    ring = (coords[0] as any)[0] as unknown[]
+  } else if (!typ && coords.length >= 3 && Array.isArray(coords[0])) {
+    // tolerate {coordinates:[[x,y],...]} without type
+    ring = coords as unknown[]
+  }
+  if (!ring) return null
+
+  const pts: Array<[number, number]> = []
+  for (const item of ring) {
+    if (!Array.isArray(item) || item.length < 2) return null
+    const x = num(item[0])
+    const y = num(item[1])
+    if (x === null || y === null) return null
+    pts.push([x, y])
+  }
+
+  if (pts.length >= 2) {
+    const a = pts[0]
+    const b = pts[pts.length - 1]
+    if (Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9) pts.pop()
+  }
+
+  return pts.length >= 3 ? pts : null
+}
+
 async function detectLocalSegmenter(): Promise<string | null> {
   if (process.env.NODE_ENV === "production") return null
+
+  type CacheEntry = { t: number; base: string | null }
+  const CACHE_OK_TTL_MS = 60_000
+  const CACHE_FAIL_TTL_MS = 4_000
+  const g = globalThis as unknown as { __sunnyviewLocalSegmenterCache?: CacheEntry }
+  const cached = g.__sunnyviewLocalSegmenterCache
+  if (cached) {
+    const age = Date.now() - cached.t
+    const ttl = cached.base ? CACHE_OK_TTL_MS : CACHE_FAIL_TTL_MS
+    if (age >= 0 && age < ttl) return cached.base
+  }
+
   const bases = ["http://127.0.0.1:8000", "http://localhost:8000"]
   for (const base of bases) {
     const ac = new AbortController()
-    const t = setTimeout(() => ac.abort(), 350)
+    const t = setTimeout(() => ac.abort(), 1200)
     try {
       const res = await fetch(`${base}/healthz`, { signal: ac.signal, headers: { accept: "application/json" } })
-      if (res.ok) return base
+      if (res.ok) {
+        g.__sunnyviewLocalSegmenterCache = { t: Date.now(), base }
+        return base
+      }
     } catch {
       // ignore
     } finally {
       clearTimeout(t)
     }
   }
+  g.__sunnyviewLocalSegmenterCache = { t: Date.now(), base: null }
   return null
 }
 
@@ -291,22 +345,39 @@ export async function POST(req: Request) {
       const focusMerc = pixelToMercator(focusPx, tf)
       const focusLatLng = mercatorUnproject(focusMerc)
 
+      const lockedFootprint = (meta as any)?.osmFootprint
+      if (extractGeojsonRingNorm(lockedFootprint)) {
+        return NextResponse.json(
+          {
+            roofPolygon: lockedFootprint,
+            source: "osm_footprint_user",
+            confidence: 0.7,
+          },
+          { status: 200 }
+        )
+      }
+
       try {
-        // 1) Try to resolve the exact building element via Nominatim reverse.
+        // 1) Try to resolve a likely building element via Nominatim reverse.
         let elements = [] as any[]
+        let reverseElements = [] as any[]
         try {
           const rev = await nominatimReverse({ lat: focusLatLng.lat, lng: focusLatLng.lng, signal: upstreamSignal })
           if (looksLikeBuildingHit(rev) && (rev.osmType === "way" || rev.osmType === "relation") && rev.osmId) {
-            elements = await fetchOverpassByOsmId({ osmType: rev.osmType, osmId: rev.osmId, signal: upstreamSignal })
+            reverseElements = await fetchOverpassByOsmId({ osmType: rev.osmType, osmId: rev.osmId, signal: upstreamSignal })
           }
         } catch {
           // ignore reverse failures
         }
 
-        // 2) Fallback: nearby buildings.
-        if (!elements.length) {
-          elements = await fetchOverpassBuildings({ lat: focusLatLng.lat, lng: focusLatLng.lng, radiusM: 160, signal: upstreamSignal })
+        // 2) Always also fetch nearby buildings (reverse can be wrong in dense areas).
+        let nearbyElements = [] as any[]
+        try {
+          nearbyElements = await fetchOverpassBuildings({ lat: focusLatLng.lat, lng: focusLatLng.lng, radiusM: 200, signal: upstreamSignal })
+        } catch {
+          // ignore
         }
+        elements = reverseElements.concat(nearbyElements)
 
         // 3) If we have an address number, also query addr-tagged buildings.
         const hints = parseAddressHints(metaAddress)
@@ -334,10 +405,29 @@ export async function POST(req: Request) {
         const pick = pickTopOrCandidates(scored)
         if (pick.kind === "single") {
           const poly = normalizeCandidatePolygon(pick.best, tf)
+
+          const includeCandidates = scored.length > 1
           return NextResponse.json(
             {
               roofPolygon: poly,
               source: "osm_building",
+              ...(includeCandidates
+                ? {
+                    candidates: scored.slice(0, 5).map((c) => ({
+                      id: c.id,
+                      polygon: normalizeCandidatePolygon(c, tf),
+                      score: c.score,
+                      contains: c.containsFocus,
+                      addrScore: c.addrScore,
+                      tags: {
+                        building: c.tags.building ?? null,
+                        housenumber: c.tags["addr:housenumber"] ?? null,
+                        street: c.tags["addr:street"] ?? null,
+                      },
+                    })),
+                    note: "Multiple buildings found. Click Edit to choose.",
+                  }
+                : {}),
               confidence: pick.best.containsFocus || pick.best.addrScore > 0 ? 0.8 : 0.6,
               debug: { bestId: pick.best.id, addrScore: pick.best.addrScore, contains: pick.best.containsFocus },
             },
@@ -360,7 +450,7 @@ export async function POST(req: Request) {
                 },
               })),
               source: "osm_candidates",
-              note: "Multiple nearby buildings found. Click the correct roof.",
+              note: "Multiple buildings found. Click Edit to choose.",
             },
             { status: 200 }
           )
@@ -472,11 +562,49 @@ export async function POST(req: Request) {
   }
 
   try {
-    // If we have map metadata, use OSM to guide the segmenter to the correct house.
+    // If we have map metadata, use OSM to guide the segmenter to the correct building.
+    // If the client already supplied an `osmFootprint`, treat it as locked and do not override.
     let guidedClicks = clicks
     let guidedRoi = roi
     let guidedMeta = meta
-    if (metaLat !== null && metaLng !== null && metaZoom !== null && metaW !== null && metaH !== null) {
+
+    let osmCandidates: Array<Record<string, unknown>> | null = null
+    let osmNote: string | null = null
+
+    const clientRing = extractGeojsonRingNorm((guidedMeta as any)?.osmFootprint)
+
+    // Derive default prompts/ROI from a client-provided footprint.
+    if (clientRing && metaW !== null && metaH !== null) {
+      if (!guidedClicks || guidedClicks.length === 0) {
+        const cx = (clientRing.reduce((s, p) => s + p[0], 0) / clientRing.length) * metaW
+        const cy = (clientRing.reduce((s, p) => s + p[1], 0) / clientRing.length) * metaH
+        guidedClicks = [{ x: cx, y: cy, type: "pos" as const }]
+      }
+
+      if (!guidedRoi) {
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const [nx, ny] of clientRing) {
+          const px = nx * metaW
+          const py = ny * metaH
+          minX = Math.min(minX, px)
+          minY = Math.min(minY, py)
+          maxX = Math.max(maxX, px)
+          maxY = Math.max(maxY, py)
+        }
+        const pad = 24
+        const x = clamp(Math.floor(minX - pad), 0, metaW)
+        const y = clamp(Math.floor(minY - pad), 0, metaH)
+        const w = clamp(Math.ceil(maxX - minX + pad * 2), 1, metaW - x)
+        const h = clamp(Math.ceil(maxY - minY + pad * 2), 1, metaH - y)
+        guidedRoi = { x, y, w, h }
+      }
+    }
+
+    // If we don't have a locked footprint, attempt address-matched OSM guidance.
+    if (!clientRing && metaLat !== null && metaLng !== null && metaZoom !== null && metaW !== null && metaH !== null) {
       try {
         const tf = staticMapTransformFromMeta({
           lat: metaLat,
@@ -493,17 +621,23 @@ export async function POST(req: Request) {
         const focusLatLng = mercatorUnproject(focusMerc)
 
         let elements = [] as any[]
+        let reverseElements = [] as any[]
         try {
           const rev = await nominatimReverse({ lat: focusLatLng.lat, lng: focusLatLng.lng, signal: upstreamSignal })
           if (looksLikeBuildingHit(rev) && (rev.osmType === "way" || rev.osmType === "relation") && rev.osmId) {
-            elements = await fetchOverpassByOsmId({ osmType: rev.osmType, osmId: rev.osmId, signal: upstreamSignal })
+            reverseElements = await fetchOverpassByOsmId({ osmType: rev.osmType, osmId: rev.osmId, signal: upstreamSignal })
           }
         } catch {
           // ignore reverse failures
         }
-        if (!elements.length) {
-          elements = await fetchOverpassBuildings({ lat: focusLatLng.lat, lng: focusLatLng.lng, radiusM: 160, signal: upstreamSignal })
+
+        let nearbyElements = [] as any[]
+        try {
+          nearbyElements = await fetchOverpassBuildings({ lat: focusLatLng.lat, lng: focusLatLng.lng, radiusM: 200, signal: upstreamSignal })
+        } catch {
+          // ignore
         }
+        elements = reverseElements.concat(nearbyElements)
 
         const hints = parseAddressHints(metaAddress)
         if (hints?.houseNumber) {
@@ -522,8 +656,30 @@ export async function POST(req: Request) {
         }
 
         const scored = rankBuildingCandidates({ elements, tf, focusPx, address: metaAddress })
-        const best = scored[0]
-        if (best) {
+        const pick = pickTopOrCandidates(scored)
+
+        // Always compute a few candidate footprints for disambiguation.
+        osmCandidates = scored.slice(0, 5).map((c) => ({
+          id: c.id,
+          polygon: normalizeCandidatePolygon(c, tf),
+          score: c.score,
+          contains: c.containsFocus,
+          addrScore: c.addrScore,
+          tags: {
+            building: c.tags.building ?? null,
+            housenumber: c.tags["addr:housenumber"] ?? null,
+            street: c.tags["addr:street"] ?? null,
+          },
+        }))
+
+        if (pick.kind === "candidates") {
+          osmNote = "Multiple buildings found. Click Edit to choose."
+        }
+
+        // Only lock the footprint when the best candidate actually contains the focus point.
+        // In dense areas, addr-tags can be wrong; locking the wrong footprint prevents CV from recovering.
+        if (pick.kind === "single" && pick.best.containsFocus) {
+          const best = pick.best
           const footprint = normalizeCandidatePolygon(best, tf)
 
           // Default click at footprint centroid.
@@ -573,26 +729,190 @@ export async function POST(req: Request) {
       }
     }
 
+    // Default ROI: focus segmentation around the interaction point.
+    // This helps in dense scenes where a center click might land on a courtyard/pool.
+    if (!guidedRoi && metaW !== null && metaH !== null) {
+      const posClick = Array.isArray(guidedClicks) ? guidedClicks.find((c) => c.type === "pos") : null
+      const fx = posClick ? posClick.x : metaW / 2
+      const fy = posClick ? posClick.y : metaH / 2
+      const size = Math.round(Math.min(metaW, metaH) * 0.72)
+      const x = clamp(Math.floor(fx - size / 2), 0, metaW)
+      const y = clamp(Math.floor(fy - size / 2), 0, metaH)
+      const w = clamp(size, 1, metaW - x)
+      const h = clamp(size, 1, metaH - y)
+      guidedRoi = { x, y, w, h }
+    }
+
+    // Ensure we always have a default click for SAM-like services.
+    if (!guidedRoi && (!guidedClicks || guidedClicks.length === 0) && metaW !== null && metaH !== null) {
+      guidedClicks = [{ x: metaW / 2, y: metaH / 2, type: "pos" as const }]
+    }
+
     // Try the most common payloads.
-    const base = { mode, ...(guidedClicks ? { clicks: guidedClicks } : {}), ...(guidedRoi ? { roi: guidedRoi } : {}), ...(guidedMeta ? { meta: guidedMeta } : {}) }
+    const base = {
+      mode,
+      ...(guidedClicks ? { clicks: guidedClicks } : {}),
+      ...(guidedRoi ? { roi: guidedRoi } : {}),
+      ...(guidedMeta ? { meta: guidedMeta } : {}),
+    }
 
     const attempt1 = await callService({ imageDataUrl, ...base })
-    if (attempt1.res.ok) return NextResponse.json(attempt1.json, { status: 200 })
+    if (attempt1.res.ok) {
+      const out = attempt1.json && typeof attempt1.json === "object" ? attempt1.json : {}
+      if (osmCandidates && osmCandidates.length) {
+        const existing = Array.isArray((out as any).candidates) ? ((out as any).candidates as any[]) : []
+        const merged = new Map<string, any>()
+        for (const it of existing) {
+          const id = typeof it?.id === "string" ? it.id : null
+          if (id) merged.set(id, it)
+        }
+        for (const it of osmCandidates) {
+          const id = typeof (it as any)?.id === "string" ? String((it as any).id) : null
+          if (id && !merged.has(id)) merged.set(id, it)
+        }
+        ;(out as any).candidates = Array.from(merged.values())
+        if (!(out as any).note && osmNote) (out as any).note = osmNote
+      }
+      return NextResponse.json(out, { status: 200 })
+    }
 
     // Some services expect `imageRef` instead of `imageDataUrl`.
     const attempt2 = await callService({ imageRef: imageDataUrl, ...base })
-    if (attempt2.res.ok) return NextResponse.json(attempt2.json, { status: 200 })
+    if (attempt2.res.ok) {
+      const out = attempt2.json && typeof attempt2.json === "object" ? attempt2.json : {}
+      if (osmCandidates && osmCandidates.length) {
+        const existing = Array.isArray((out as any).candidates) ? ((out as any).candidates as any[]) : []
+        const merged = new Map<string, any>()
+        for (const it of existing) {
+          const id = typeof it?.id === "string" ? it.id : null
+          if (id) merged.set(id, it)
+        }
+        for (const it of osmCandidates) {
+          const id = typeof (it as any)?.id === "string" ? String((it as any).id) : null
+          if (id && !merged.has(id)) merged.set(id, it)
+        }
+        ;(out as any).candidates = Array.from(merged.values())
+        if (!(out as any).note && osmNote) (out as any).note = osmNote
+      }
+      return NextResponse.json(out, { status: 200 })
+    }
+
+    // Compatibility: some upstreams require a click even when a box/ROI is provided.
+    if ((!guidedClicks || guidedClicks.length === 0) && guidedRoi) {
+      const roiClick = { x: guidedRoi.x + guidedRoi.w / 2, y: guidedRoi.y + guidedRoi.h / 2, type: "pos" as const }
+      const baseWithClick = { ...base, clicks: [roiClick] }
+      const attempt3 = await callService({ imageDataUrl, ...baseWithClick })
+      if (attempt3.res.ok) {
+        const out = attempt3.json && typeof attempt3.json === "object" ? attempt3.json : {}
+        if (osmCandidates && osmCandidates.length) {
+          const existing = Array.isArray((out as any).candidates) ? ((out as any).candidates as any[]) : []
+          const merged = new Map<string, any>()
+          for (const it of existing) {
+            const id = typeof it?.id === "string" ? it.id : null
+            if (id) merged.set(id, it)
+          }
+          for (const it of osmCandidates) {
+            const id = typeof (it as any)?.id === "string" ? String((it as any).id) : null
+            if (id && !merged.has(id)) merged.set(id, it)
+          }
+          ;(out as any).candidates = Array.from(merged.values())
+          if (!(out as any).note && osmNote) (out as any).note = osmNote
+        }
+        return NextResponse.json(out, { status: 200 })
+      }
+    }
+
+    const lockedFootprint = (guidedMeta as any)?.osmFootprint
+    if (lockedFootprint) {
+      return NextResponse.json(
+        {
+          roofPolygon: lockedFootprint,
+          source: "osm_footprint_after_segmenter_error",
+          confidence: 0.45,
+          note: "CV failed; using OSM outline.",
+          ...(osmCandidates && osmCandidates.length ? { candidates: osmCandidates, ...(osmNote ? { note: osmNote } : {}) } : {}),
+          debug: { status: attempt2.res.status, details: attempt2.json },
+        },
+        { status: 200 }
+      )
+    }
+
+    if (metaZoom !== null && metaW !== null && metaH !== null) {
+      const poly = fallbackRectRoofPolygon({
+        widthPx: metaW,
+        heightPx: metaH,
+        zoom: metaZoom,
+        scale: num((meta as any)?.staticMap?.scale),
+      })
+      return NextResponse.json(
+        {
+          roofPolygon: poly,
+          source: "fallback_rect",
+          confidence: 0.15,
+          note: "CV failed; using rectangle.",
+          ...(osmCandidates && osmCandidates.length ? { candidates: osmCandidates, ...(osmNote ? { note: osmNote } : {}) } : {}),
+          debug: { status: attempt2.res.status, details: attempt2.json },
+        },
+        { status: 200 }
+      )
+    }
 
     return NextResponse.json(
       {
-        error: `Segmentation failed (${attempt2.res.status})`,
-        details: attempt2.json,
-        note: "Tried payloads: {imageDataUrl,...} then {imageRef,...}",
+        roofPolygon: {
+          type: "Polygon",
+          coordinates: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]],
+        },
+        source: "fallback_rect",
+        confidence: 0.1,
+        note: "CV failed; using rectangle.",
+        ...(osmCandidates && osmCandidates.length ? { candidates: osmCandidates, ...(osmNote ? { note: osmNote } : {}) } : {}),
+        debug: { status: attempt2.res.status, details: attempt2.json },
       },
-      { status: 502 }
+      { status: 200 }
     )
   } catch (e) {
     const timedOut = e instanceof Error && e.name === "AbortError"
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Segmentation exception" }, { status: timedOut ? 504 : 502 })
+    const lockedFootprint = (meta as any)?.osmFootprint
+    if (lockedFootprint) {
+      return NextResponse.json(
+        {
+          roofPolygon: lockedFootprint,
+          source: "osm_footprint_after_segmenter_exception",
+          confidence: 0.45,
+          note: timedOut ? "Timeout; using OSM outline." : "CV failed; using OSM outline.",
+        },
+        { status: 200 }
+      )
+    }
+    if (metaZoom !== null && metaW !== null && metaH !== null) {
+      const poly = fallbackRectRoofPolygon({
+        widthPx: metaW,
+        heightPx: metaH,
+        zoom: metaZoom,
+        scale: num((meta as any)?.staticMap?.scale),
+      })
+      return NextResponse.json(
+        {
+          roofPolygon: poly,
+          source: "fallback_rect",
+          confidence: 0.15,
+          note: timedOut ? "Timeout; using rectangle." : "CV failed; using rectangle.",
+        },
+        { status: 200 }
+      )
+    }
+    return NextResponse.json(
+      {
+        roofPolygon: {
+          type: "Polygon",
+          coordinates: [[[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]],
+        },
+        source: "fallback_rect",
+        confidence: 0.1,
+        note: timedOut ? "Timeout; using rectangle." : "CV failed; using rectangle.",
+      },
+      { status: 200 }
+    )
   }
 }

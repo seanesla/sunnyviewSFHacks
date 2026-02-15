@@ -101,4 +101,39 @@ describe("OSM building ranking", () => {
     const pick = pickTopOrCandidates(scored)
     expect(pick.kind).toBe("candidates")
   })
+
+  it("does not let distant addr-tags beat containment", () => {
+    const tf = staticMapTransformFromCenter({
+      lat: 0,
+      lng: 0,
+      zoom: 18,
+      baseW: 520,
+      baseH: 360,
+      scale: 2,
+      widthPx: 1040,
+      heightPx: 720,
+    })
+
+    const elements: any[] = [
+      // Near building contains focus.
+      { type: "way", id: 1, tags: { building: "apartments" }, geometry: squareGeom(0, 0, 0.00005) },
+      // Far building has perfect address tags but is hundreds of meters away.
+      {
+        type: "way",
+        id: 2,
+        tags: { building: "house", "addr:housenumber": "123", "addr:street": "Main Street" },
+        geometry: squareGeom(0, 0.004, 0.00005),
+      },
+    ]
+
+    const scored = rankBuildingCandidates({
+      elements,
+      tf,
+      focusPx: { x: 520, y: 360 },
+      address: "123 Main St",
+    })
+
+    expect(scored[0]?.id).toBe("way:1")
+    expect(scored[0]?.containsFocus).toBe(true)
+  })
 })

@@ -111,7 +111,7 @@ def _mask_iou(a: np.ndarray, b: np.ndarray) -> float:
 
 def _keep_component(mask: np.ndarray, cx: int, cy: int) -> np.ndarray:
     m = (mask > 0).astype(np.uint8)
-    n, labels = cv2.connectedComponents(m)
+    n, labels, stats, centroids = cv2.connectedComponentsWithStats(m)
     if n <= 1:
         return m
     cx = int(np.clip(cx, 0, labels.shape[1] - 1))
@@ -120,14 +120,21 @@ def _keep_component(mask: np.ndarray, cx: int, cy: int) -> np.ndarray:
     if lab != 0:
         return (labels == lab).astype(np.uint8)
 
-    # Click is outside; keep the largest component.
-    areas = []
+    # Click is outside (or inside a hole). Choose the component whose centroid is closest
+    # to the click. This is robust for courtyard-style apartment roofs.
+    best_lab = 0
+    best_d2 = 1e30
+    best_area = -1
     for i in range(1, n):
-        areas.append((int((labels == i).sum()), i))
-    areas.sort(reverse=True)
-    if not areas:
-        return m
-    return (labels == areas[0][1]).astype(np.uint8)
+        ccx, ccy = centroids[i]
+        d2 = float(ccx - float(cx)) ** 2 + float(ccy - float(cy)) ** 2
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if d2 < best_d2 - 1e-9 or (abs(d2 - best_d2) <= 1e-9 and area > best_area):
+            best_lab = i
+            best_d2 = d2
+            best_area = area
+
+    return (labels == best_lab).astype(np.uint8) if best_lab != 0 else m
 
 
 def _mask_to_polygon_norm(mask: np.ndarray, w: int, h: int) -> Optional[Dict[str, Any]]:
@@ -393,6 +400,23 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
 
     mode = (req.mode or "roof").strip().lower()
 
+    # White-roof prior (helps on bright apartment/commercial roofs, pools/courtyards in the middle).
+    white_prob: Optional[np.ndarray] = None
+    try:
+        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+        sat = hsv[:, :, 1] / 255.0
+        val = hsv[:, :, 2] / 255.0
+        wp = np.clip((val - 0.55) / 0.45, 0.0, 1.0) * np.clip((0.35 - sat) / 0.35, 0.0, 1.0)
+        wp = cv2.GaussianBlur(wp, (0, 0), 1.2).astype(np.float32)
+        if roi_bounds is not None:
+            x0, y0, x1, y1 = roi_bounds
+            keep = np.zeros((h, w), dtype=np.float32)
+            keep[y0:y1, x0:x1] = 1.0
+            wp = wp * keep
+        white_prob = wp
+    except Exception:
+        white_prob = None
+
     onnx_error: Optional[str] = None
     if mode in ("roof", "building") and ONNX.ensure_loaded():
         try:
@@ -401,6 +425,16 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
             else:
                 prob = ONNX.predict_prob(img_bgr)
 
+            prob_raw = prob
+            boost_raw = os.getenv("ROOFSEG_WHITE_BOOST", "0.18").strip()
+            try:
+                boost = float(boost_raw)
+            except Exception:
+                boost = 0.18
+            boost = float(np.clip(boost, 0.0, 0.5))
+            if white_prob is not None and boost > 0:
+                prob = np.clip(prob + boost * white_prob, 0.0, 1.0).astype(np.float32)
+
             thr_raw = os.getenv("ROOFSEG_THRESHOLD", "0.5").strip()
             try:
                 thr = float(thr_raw)
@@ -408,42 +442,129 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
                 thr = 0.5
             thr = float(np.clip(thr, 0.05, 0.95))
 
-            chosen = (prob >= thr).astype(np.uint8)
+            sweep_raw = os.getenv("ROOFSEG_THRESHOLD_SWEEP", "1").strip().lower()
+            sweep = sweep_raw not in ("0", "false", "off", "no")
+            # Sweep a few thresholds to be robust to very bright (white) roofs.
+            thr_list = [thr]
+            if sweep:
+                thr_list.extend([thr - 0.08, thr - 0.16, thr + 0.08])
+                thr_list.extend([0.35, 0.45])
+            thr_list = [float(np.clip(t, 0.05, 0.95)) for t in thr_list]
+            thr_list = sorted({round(t, 4) for t in thr_list})
 
+            def click_dist_to_mask(m_u8: np.ndarray) -> float:
+                if pos is None:
+                    return 0.0
+                if not (0 <= cy < m_u8.shape[0] and 0 <= cx < m_u8.shape[1]):
+                    return 1e9
+                if bool(m_u8[cy, cx]):
+                    return 0.0
+                inv = (m_u8 == 0).astype(np.uint8)
+                dist = cv2.distanceTransform(inv, cv2.DIST_L2, 3)
+                return float(dist[cy, cx])
+
+            best = None
+            best_debug: Dict[str, Any] = {}
+            best_thr = thr
             best_iou = -1.0
-            if footprint_mask is not None:
-                k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-                footprint_pad = cv2.dilate(footprint_mask.astype(np.uint8), k, iterations=1)
-                chosen = choose_component_by_footprint(chosen, footprint_pad)
-                best_iou = _mask_iou(chosen, footprint_mask)
-                chosen = (np.logical_and(chosen > 0, footprint_pad > 0)).astype(np.uint8)
+            best_mean_p = 0.0
+            best_mask = None
+            best_full_mask = None
 
-            if roi_bounds is not None:
-                x0, y0, x1, y1 = roi_bounds
-                roi_mask = np.zeros((h, w), dtype=np.uint8)
-                roi_mask[y0:y1, x0:x1] = 1
-                chosen = (np.logical_and(chosen > 0, roi_mask > 0)).astype(np.uint8)
+            for t in thr_list:
+                full_mask = (prob >= float(t)).astype(np.uint8)
 
-            chosen = _keep_component(chosen, cx, cy)
+                # Apply ROI early so candidate components stay within it.
+                if roi_bounds is not None:
+                    x0, y0, x1, y1 = roi_bounds
+                    roi_mask = np.zeros((h, w), dtype=np.uint8)
+                    roi_mask[y0:y1, x0:x1] = 1
+                    full_mask = (np.logical_and(full_mask > 0, roi_mask > 0)).astype(np.uint8)
 
-            if int(chosen.sum()) >= 30:
+                chosen = full_mask
+                iou = -1.0
+
+                if footprint_mask is not None:
+                    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+                    footprint_pad = cv2.dilate(footprint_mask.astype(np.uint8), k, iterations=1)
+                    chosen = choose_component_by_footprint(chosen, footprint_pad)
+                    iou = _mask_iou(chosen, footprint_mask)
+                    chosen = (np.logical_and(chosen > 0, footprint_pad > 0)).astype(np.uint8)
+
+                # Keep a copy for candidate polygons (before the single-component selection).
+                cand_mask = chosen
+
+                chosen = _keep_component(chosen, cx, cy)
+                area = int(chosen.sum())
+                if area < 30:
+                    continue
+
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
                 chosen = cv2.morphologyEx(chosen, cv2.MORPH_CLOSE, kernel, iterations=2)
                 chosen = cv2.morphologyEx(chosen, cv2.MORPH_OPEN, kernel, iterations=1)
 
                 poly = _mask_to_polygon_norm(chosen, w, h)
+                if poly is None:
+                    continue
+
+                mean_p = float(prob[chosen > 0].mean()) if area > 0 else 0.0
+                click_d = click_dist_to_mask(chosen)
+                score = 1.25 * mean_p + 0.55 * float(max(iou, 0.0)) - 0.006 * float(min(click_d, 120.0))
+                if best is None or score > best:
+                    best = score
+                    best_thr = float(t)
+                    best_iou = float(iou)
+                    best_mean_p = float(mean_p)
+                    best_mask = chosen
+                    best_full_mask = cand_mask
+                    best_debug = {
+                        "threshold": float(t),
+                        "meanProb": float(mean_p),
+                        "iou": float(max(iou, 0.0)),
+                        "clickDist": float(click_d),
+                        "area": int(area),
+                    }
+
+            if best_mask is not None:
+                # Build a few candidate polygons from the selected threshold mask.
+                onnx_candidates: List[Dict[str, Any]] = []
+                try:
+                    cmask = (best_full_mask if best_full_mask is not None else best_mask).astype(np.uint8)
+                    ncc, labels, stats, _ = cv2.connectedComponentsWithStats(cmask)
+                    comps = []
+                    for lab in range(1, ncc):
+                        area = int(stats[lab, cv2.CC_STAT_AREA])
+                        if area < 260:
+                            continue
+                        comps.append((area, lab))
+                    comps.sort(reverse=True)
+                    for idx, (area, lab) in enumerate(comps[:5]):
+                        cm = (labels == lab).astype(np.uint8)
+                        poly_i = _mask_to_polygon_norm(cm, w, h)
+                        if poly_i is None:
+                            continue
+                        mean_p = float(prob[cm > 0].mean()) if area > 0 else 0.0
+                        onnx_candidates.append({"id": f"cv_{idx+1}", "polygon": poly_i, "score": float(mean_p)})
+                except Exception:
+                    onnx_candidates = []
+
+                poly = _mask_to_polygon_norm(best_mask, w, h)
                 if poly is not None:
-                    mean_p = float(prob[chosen > 0].mean()) if int(chosen.sum()) > 0 else 0.0
-                    conf = float(np.clip(0.15 + 0.75 * mean_p + 0.10 * float(max(best_iou, 0.0)), 0.0, 1.0))
+                    conf = float(np.clip(0.15 + 0.75 * best_mean_p + 0.10 * float(max(best_iou, 0.0)), 0.0, 1.0))
                     return {
                         "roofPolygon": poly,
                         "confidence": conf,
                         "source": "roofsat_onnx",
+                        "candidates": onnx_candidates if onnx_candidates else None,
                         "debug": {
                             "onnx": True,
-                            "threshold": thr,
-                            "meanProb": mean_p,
-                            "iou": max(best_iou, 0.0),
+                            "threshold": float(best_thr),
+                            "thresholdBase": float(thr),
+                            "thresholdSweep": bool(sweep),
+                            "whiteBoost": float(boost) if (white_prob is not None and boost > 0) else 0.0,
+                            "meanProb": float(best_mean_p),
+                            "iou": float(max(best_iou, 0.0)),
+                            **best_debug,
                         },
                     }
         except Exception as e:
@@ -451,6 +572,59 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
 
     # If SAM isn't ready, still return the server-selected address footprint.
     if not SAM.ensure_loaded():
+        # Heuristic fallback: bright/white roofs (useful when ONNX isn't configured).
+        if mode in ("roof", "building") and white_prob is not None:
+            try:
+                thr_raw = os.getenv("ROOFSEG_WHITE_THRESHOLD", "0.42").strip()
+                try:
+                    thr_w = float(thr_raw)
+                except Exception:
+                    thr_w = 0.42
+                thr_w = float(np.clip(thr_w, 0.15, 0.9))
+
+                m = (white_prob >= thr_w).astype(np.uint8)
+
+                if roi_bounds is not None:
+                    x0, y0, x1, y1 = roi_bounds
+                    roi_mask = np.zeros((h, w), dtype=np.uint8)
+                    roi_mask[y0:y1, x0:x1] = 1
+                    m = (np.logical_and(m > 0, roi_mask > 0)).astype(np.uint8)
+
+                # If we have a footprint and it overlaps, use it to disambiguate.
+                if footprint_mask is not None:
+                    iou0 = _mask_iou(m, footprint_mask)
+                    if iou0 >= 0.08:
+                        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+                        footprint_pad = cv2.dilate(footprint_mask.astype(np.uint8), k, iterations=1)
+                        m = choose_component_by_footprint(m, footprint_pad)
+                        m = (np.logical_and(m > 0, footprint_pad > 0)).astype(np.uint8)
+
+                m = _keep_component(m, cx, cy)
+
+                if int(m.sum()) >= 60:
+                    k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+                    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k2, iterations=2)
+                    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k2, iterations=1)
+                    poly = _mask_to_polygon_norm(m, w, h)
+                    if poly is not None:
+                        mean_w = float(white_prob[m > 0].mean()) if int(m.sum()) > 0 else 0.0
+                        conf = float(np.clip(0.15 + 0.85 * mean_w, 0.0, 1.0))
+                        return {
+                            "roofPolygon": poly,
+                            "confidence": conf,
+                            "source": "white_roof_heuristic",
+                            "debug": {
+                                "sam": False,
+                                "samError": SAM.error,
+                                "onnx": False,
+                                "onnxError": onnx_error or ONNX.error,
+                                "whiteThr": float(thr_w),
+                                "meanWhite": float(mean_w),
+                            },
+                        }
+            except Exception:
+                pass
+
         if meta.get("osmFootprint") is not None:
             return {
                 "roofPolygon": meta.get("osmFootprint"),
@@ -512,6 +686,18 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
     # Choose the mask that best matches the address footprint when available.
     # First pass: require click containment (when provided). Second pass: relax.
     mask_items = []
+
+    def click_distance_to_mask(m_u8: np.ndarray) -> float:
+        if pos is None:
+            return 0.0
+        if not (0 <= cy < m_u8.shape[0] and 0 <= cx < m_u8.shape[1]):
+            return 1e9
+        if bool(m_u8[cy, cx]):
+            return 0.0
+        inv = (m_u8 == 0).astype(np.uint8)
+        dist = cv2.distanceTransform(inv, cv2.DIST_L2, 3)
+        return float(dist[cy, cx])
+
     for i in range(len(masks)):
         m = masks[i]
         if m is None:
@@ -521,7 +707,10 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
         if 0 <= cy < m_u8.shape[0] and 0 <= cx < m_u8.shape[1]:
             contains_click = bool(m_u8[cy, cx])
         s = float(scores[i]) if i < len(scores) else 0.0
-        mask_items.append((i, m_u8, contains_click, s))
+        d = click_distance_to_mask(m_u8)
+        area = int(m_u8.sum())
+        mean_white = float(white_prob[m_u8 > 0].mean()) if (white_prob is not None and area > 0) else 0.0
+        mask_items.append((i, m_u8, contains_click, s, d, area, mean_white))
 
     if not mask_items:
         if meta.get("osmFootprint") is not None:
@@ -536,19 +725,38 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
     def pick_best(items):
         best = items[0]
         best_iou_local = _mask_iou(best[1], footprint_mask) if footprint_mask is not None else -1.0
+        best_rank = -1e18
+
+        def rank(it) -> float:
+            # it = (idx, mask, contains_click, sam_score, click_dist, area, mean_white)
+            sam_s = float(it[3])
+            click_d = float(it[4])
+            area = float(it[5])
+            mean_white = float(it[6])
+
+            # If we don't have a click, do not penalize click distance.
+            if pos is None:
+                click_d = 0.0
+
+            # Pool/water masks tend to be low "white"; roofs tend to be higher.
+            return 1.05 * sam_s + 0.85 * mean_white + 0.00022 * area - 0.004 * float(min(click_d, 120.0))
+
+        best_rank = rank(best)
         for it in items[1:]:
             if footprint_mask is not None:
                 iou = _mask_iou(it[1], footprint_mask)
-                if iou > best_iou_local:
+                if iou > best_iou_local + 1e-9 or (abs(iou - best_iou_local) <= 1e-9 and it[4] < best[4]):
                     best = it
                     best_iou_local = iou
                 continue
-            # no footprint: pick by SAM score
-            if it[3] > best[3]:
+
+            r = rank(it)
+            if r > best_rank + 1e-9:
                 best = it
+                best_rank = r
         return best, best_iou_local
 
-    filtered = [it for it in mask_items if (pos is None or it[2])]
+    filtered = [it for it in mask_items if (pos is None or it[2] or it[4] <= 60.0)]
     chosen_item, best_iou = pick_best(filtered if filtered else mask_items)
     best_idx = int(chosen_item[0])
     best_score = float(chosen_item[3])
@@ -582,7 +790,40 @@ def segment(req: SegmentRequest) -> Dict[str, Any]:
 
     suggested_orientation: Optional[float] = None
     suggested_azimuth: Optional[float] = None
-    candidates_out: List[Dict[str, Any]] = []
+
+    # Candidate roof polygons (alternate SAM masks).
+    sam_candidates: List[Dict[str, Any]] = []
+    try:
+        roi_mask_full: Optional[np.ndarray] = None
+        if roi_bounds is not None:
+            x0, y0, x1, y1 = roi_bounds
+            roi_mask_full = np.zeros((h, w), dtype=np.uint8)
+            roi_mask_full[y0:y1, x0:x1] = 1
+
+        footprint_pad2: Optional[np.ndarray] = None
+        if footprint_mask is not None:
+            k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+            footprint_pad2 = cv2.dilate(footprint_mask.astype(np.uint8), k2, iterations=1)
+
+        k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        for idx, it in enumerate(mask_items[:5]):
+            cm = it[1].astype(np.uint8)
+            if footprint_pad2 is not None:
+                cm = (np.logical_and(cm > 0, footprint_pad2 > 0)).astype(np.uint8)
+            if roi_mask_full is not None:
+                cm = (np.logical_and(cm > 0, roi_mask_full > 0)).astype(np.uint8)
+            if int(cm.sum()) < 30:
+                continue
+            cm = cv2.morphologyEx(cm, cv2.MORPH_CLOSE, k3, iterations=2)
+            cm = cv2.morphologyEx(cm, cv2.MORPH_OPEN, k3, iterations=1)
+            poly_i = _mask_to_polygon_norm(cm, w, h)
+            if poly_i is None:
+                continue
+            sam_candidates.append({"id": f"sam_{idx+1}", "polygon": poly_i, "score": float(it[3])})
+    except Exception:
+        sam_candidates = []
+
+    candidates_out: List[Dict[str, Any]] = sam_candidates
     source = "sam"
 
     # Orientation hint from dominant roof edges.

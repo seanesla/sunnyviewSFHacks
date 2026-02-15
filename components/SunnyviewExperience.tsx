@@ -469,7 +469,15 @@ export function SunnyviewExperience() {
 
   const [vertices, setVertices] = useState<Point[]>([]);
   const [closed, setClosed] = useState<boolean>(false);
-  const [panels, setPanels] = useState<PlacedPanel[]>([]);
+  const [panelsPacked, setPanelsPacked] = useState<PlacedPanel[]>([]);
+  const [panelCountOverride, setPanelCountOverride] = useState<number | null>(null);
+
+  const panels = useMemo(() => {
+    if (panelCountOverride === null) return panelsPacked;
+    const max = panelsPacked.length;
+    const n = Math.max(0, Math.min(max, Math.floor(panelCountOverride)));
+    return panelsPacked.slice(0, n);
+  }, [panelCountOverride, panelsPacked]);
 
   const [autoOutlineBusy, setAutoOutlineBusy] = useState(false);
   const [autoOutlineError, setAutoOutlineError] = useState<string | null>(null);
@@ -488,11 +496,33 @@ export function SunnyviewExperience() {
     source: "fallback",
   });
 
+  const panelCountAuto = panelsPacked.length;
   const panelCount = panels.length;
   const dcKw = useMemo(
     () => (panelCount * panelSpec.wattW) / 1000,
     [panelCount, panelSpec.wattW],
   );
+
+  const setManualPanelCount = useCallback(
+    (raw: number) => {
+      if (!Number.isFinite(raw)) return;
+      const max = Math.max(0, panelCountAuto);
+      const n = Math.max(0, Math.min(max, Math.round(raw)));
+      if (n >= max) setPanelCountOverride(null);
+      else setPanelCountOverride(n);
+    },
+    [panelCountAuto],
+  );
+
+  const manualPanelCount = panelCountOverride === null ? panelCountAuto : panelCountOverride;
+
+  useEffect(() => {
+    if (panelCountOverride === null) return;
+    const max = Math.max(0, panelCountAuto);
+    const n = Math.max(0, Math.min(max, Math.floor(panelCountOverride)));
+    if (n >= max) setPanelCountOverride(null);
+    else if (n !== panelCountOverride) setPanelCountOverride(n);
+  }, [panelCountAuto, panelCountOverride]);
 
   const panelChoiceLabel = useMemo(() => {
     if (panelChoiceId === "custom") return "Custom"
@@ -788,18 +818,18 @@ export function SunnyviewExperience() {
     if (!panelsMounted) return;
     const t = window.setTimeout(() => {
       if (!closed || vertices.length < 3 || !mPerPx) {
-        setPanels([]);
+        setPanelsPacked([]);
         return;
       }
 
       const key = `roof:${Math.round((roofAreaM2 ?? 0) * 10) / 10}:${vertices.length}:${Math.round(mPerPx * 1e6)}`;
       if (panelSpecMode === "auto" && panelAutoReadyKey !== key) {
         // Wait until auto panel sizing/pick runs for this roof.
-        setPanels([]);
+        setPanelsPacked([]);
         return;
       }
 
-      setPanels(
+      setPanelsPacked(
         packPanelsDeterministic({
           usablePolygon: vertices,
           mPerPx,
@@ -953,7 +983,8 @@ export function SunnyviewExperience() {
 
     setVertices([]);
     setClosed(false);
-    setPanels([]);
+    setPanelsPacked([]);
+    setPanelCountOverride(null);
     setCandidatePolygons(null);
     setAutoOutlineBusy(false);
     setAutoOutlineError(null);
@@ -1258,20 +1289,30 @@ export function SunnyviewExperience() {
   }
 
   const runAutoOutline = useCallback(
-    async (opts?: { reason?: "auto" | "manual" }) => {
+    async (opts?: {
+      reason?: "auto" | "manual";
+      roi?: { x: number; y: number; w: number; h: number } | null;
+      metaOverride?: Record<string, unknown> | null;
+    }) => {
       const reason = opts?.reason ?? "manual";
+      const roi = opts?.roi ?? null;
+      const metaOverride = opts?.metaOverride ?? null;
 
       const request = (() => {
         if (mapInput.kind === "image" && mapInput.image?.dataUrl) {
           const w = mapInput.image.widthPx;
           const h = mapInput.image.heightPx;
+          const click = roi
+            ? { x: roi.x + roi.w / 2, y: roi.y + roi.h / 2, type: "pos" as const }
+            : { x: w / 2, y: h / 2, type: "pos" as const };
           return {
             w,
             h,
             body: {
               imageDataUrl: mapInput.image.dataUrl,
               mode: "roof",
-              clicks: [{ x: w / 2, y: h / 2, type: "pos" }],
+              clicks: [click],
+              ...(roi ? { roi } : {}),
               meta: {
                 lat: mapInput.lat,
                 lng: mapInput.lng,
@@ -1279,6 +1320,7 @@ export function SunnyviewExperience() {
                 widthPx: w,
                 heightPx: h,
                 address: mapInput.address ?? null,
+                ...(metaOverride ?? {}),
               },
             },
           };
@@ -1287,16 +1329,21 @@ export function SunnyviewExperience() {
         if (mapInput.kind === "address" && addressStatic) {
           const w = addressStatic.widthPx;
           const h = addressStatic.heightPx;
+          const clicks = roi
+            ? ([{ x: roi.x + roi.w / 2, y: roi.y + roi.h / 2, type: "pos" as const }] as const)
+            : null;
           return {
             w,
             h,
             body: {
               imageUrl: addressStatic.src,
               mode: "roof",
-              clicks: [{ x: w / 2, y: h / 2, type: "pos" }],
+              ...(clicks ? { clicks: clicks as any } : {}),
+              ...(roi ? { roi } : {}),
               meta: {
                 ...addressStatic.meta,
                 address: addressStatic.address,
+                ...(metaOverride ?? {}),
               },
             },
           };
@@ -1372,6 +1419,9 @@ export function SunnyviewExperience() {
             : typeof data?.result?.source === "string"
               ? String(data.result.source)
               : null;
+        const confidence =
+          coerceNumber(data?.confidence) ??
+          coerceNumber(data?.result?.confidence);
         const looksLikeFootprint =
           typeof source === "string" &&
           (source === "osm_building" ||
@@ -1413,13 +1463,26 @@ export function SunnyviewExperience() {
           setAzimuthDeg(az);
         }
 
+        setPanelsPacked([]);
+        setPanelCountOverride(null);
         setVertices(selected);
         setClosed(true);
 
         if (!hint && reason === "auto" && candidates.length > 1) {
-          hint = "Multiple nearby roofs detected. Click the correct outline if needed.";
+          hint = "Multiple roofs nearby. Click Edit to pick.";
         }
-        if (!hint && note) hint = note;
+        const safeNote = note && note.length <= 52 ? note : null;
+        if (!hint && safeNote) hint = safeNote;
+
+        const fallbackish =
+          typeof source === "string" &&
+          (source === "fallback_rect" || source.includes("fallback_rect") || source.includes("segmenter_error"));
+        const lowConfidence = confidence !== null && confidence < 0.32;
+        if ((fallbackish || lowConfidence) && !hint) {
+          hint = "Edit -> ROI -> Auto-line.";
+        } else if (!hint && looksLikeFootprint) {
+          hint = "OSM outline. Edit -> ROI -> Auto-line.";
+        }
         if (hint) setAutoOutlineHint(hint);
       } catch (e) {
         if (ac.signal.aborted) return;
@@ -1444,6 +1507,8 @@ export function SunnyviewExperience() {
 
     setVertices([]);
     setClosed(false);
+    setPanelsPacked([]);
+    setPanelCountOverride(null);
     setCandidatePolygons(null);
     setAutoOutlineError(null);
     setAutoOutlineHint(null);
@@ -1460,6 +1525,8 @@ export function SunnyviewExperience() {
       if (!c) return;
       setVertices(c.polygon);
       setClosed(true);
+      setPanelsPacked([]);
+      setPanelCountOverride(null);
       setRoofAxisHintDeg(null);
       setPanelAutoReadyKey(null);
       lastPanelAutoKeyRef.current = null;
@@ -1470,8 +1537,47 @@ export function SunnyviewExperience() {
         const axisDeg = polygonDominantEdgeAxisDeg(c.polygon);
         setOrientationDeg(bestRoofAlignedPackingOrientationDeg({ polygon: c.polygon, mPerPx, panelSpec, axisDeg }));
       }
+
+      // If the candidates came from OSM disambiguation, refine the chosen building with CV
+      // by locking the footprint + focusing an ROI.
+      const dims =
+        mapInput.kind === "image" && mapInput.image
+          ? { w: mapInput.image.widthPx, h: mapInput.image.heightPx }
+          : mapInput.kind === "address" && addressStatic
+            ? { w: addressStatic.widthPx, h: addressStatic.heightPx }
+            : null;
+      if (!dims) return;
+
+      const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+      const ring = c.polygon.map((p) => [clamp01(p.x / dims.w), clamp01(p.y / dims.h)]);
+      const footprint = { type: "Polygon", coordinates: [ring] };
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const p of c.polygon) {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+      }
+      const pad = 18;
+      const x = Math.max(0, Math.floor(minX - pad));
+      const y = Math.max(0, Math.floor(minY - pad));
+      const w = Math.max(1, Math.min(dims.w - x, Math.ceil(maxX - minX + pad * 2)));
+      const h = Math.max(1, Math.min(dims.h - y, Math.ceil(maxY - minY + pad * 2)));
+
+      void runAutoOutline({
+        reason: "manual",
+        roi: { x, y, w, h },
+        metaOverride: {
+          osmFootprint: footprint,
+          osmSource: "user",
+        },
+      });
     },
-    [candidatePolygons, mPerPx, panelSpec]
+    [addressStatic, candidatePolygons, mapInput.kind, mapInput.image, mPerPx, panelSpec, runAutoOutline]
   );
 
   const shareUrl = useMemo(() => {
@@ -1576,6 +1682,8 @@ export function SunnyviewExperience() {
         panels={panels}
         onVerticesChange={(v) => {
           setVertices(v);
+          setPanelCountOverride(null);
+          setPanelsPacked([]);
           setRoofAxisHintDeg(null);
           setPanelAutoReadyKey(null);
           lastPanelAutoKeyRef.current = null;
@@ -1593,7 +1701,7 @@ export function SunnyviewExperience() {
           }
         }}
         onClosedChange={setClosed}
-        onAutoOutline={() => runAutoOutline({ reason: "manual" })}
+        onAutoOutline={(o) => runAutoOutline({ reason: "manual", roi: o?.roi ?? null })}
         autoOutlineBusy={autoOutlineBusy}
         autoOutlineError={autoOutlineError}
         autoOutlineHint={autoOutlineHint}
@@ -1851,6 +1959,45 @@ export function SunnyviewExperience() {
           Panel packing
         </div>
         <div className="mt-3 grid gap-3">
+          <div className="glass-surface rounded-lg p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-foreground">Panels (count)</div>
+              <button
+                type="button"
+                className="rounded-md bg-secondary px-2.5 py-1 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80 disabled:opacity-50"
+                onClick={() => setPanelCountOverride(null)}
+                disabled={panelCountOverride === null}
+                title="Reset to auto"
+              >
+                Auto
+              </button>
+            </div>
+
+            <div className="mt-2 grid grid-cols-[1fr,92px] items-center gap-2">
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, panelCountAuto)}
+                step={1}
+                value={manualPanelCount}
+                onChange={(e) => setManualPanelCount(Number(e.target.value))}
+                className="w-full"
+                disabled={panelCountAuto <= 0}
+              />
+              <input
+                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
+                value={manualPanelCount}
+                onChange={(e) => setManualPanelCount(Number(e.target.value))}
+                inputMode="numeric"
+                disabled={panelCountAuto <= 0}
+              />
+            </div>
+
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              Auto fits {panelCountAuto}. Manual resets when you edit the roof or search a new address.
+            </div>
+          </div>
+
           <label className="space-y-1">
             <div className="text-xs text-muted-foreground">
               Orientation (deg)

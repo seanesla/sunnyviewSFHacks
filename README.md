@@ -10,18 +10,23 @@ In about 30 seconds, a user can trace a roof and get quick panel, energy, and CO
 - Local API routes implemented here:
   - `/api/geocode`
   - `/api/static-map`
+  - `/api/reverse-geocode`
+  - `/api/estimate`
+  - `/api/segment` (OSM outline fallback; optional Python CV service)
+  - `/api/explain`
+  - `/api/tts`
+  - `/api/forecast`
+  - `/api/panel-recommend`
+  - `/api/gemini-validate`
 
 ## External dependencies (not implemented in this repo)
 
 These routes require a separate backend service and are optional integrations:
 
 - `POST /api/projects`
-- `PATCH /api/projects/:id`
-- `POST /api/estimate`
-- `POST /api/segment`
-- `POST /api/explain`
-- `POST /api/tts`
-- `GET /s/:shareSlug`
+ - `GET /api/projects/:id`
+ - `PATCH /api/projects/:id`
+ - `GET /s/:shareSlug` (JSON snapshot endpoint)
 
 If those endpoints are missing, the app still runs in local demo mode with fallbacks.
 
@@ -46,8 +51,11 @@ NEXT_PUBLIC_API_ORIGIN=http://localhost:3001
 # Optional Cesium ion imagery
 NEXT_PUBLIC_CESIUM_ION_TOKEN=
 
-# Optional legacy components only
-NEXT_PUBLIC_MAPBOX_TOKEN=
+  # Optional legacy components only
+  NEXT_PUBLIC_MAPBOX_TOKEN=
+
+  # Optional local CV segmenter (FastAPI). See `services/segmenter/README.md`.
+  SEGMENT_SERVICE_URL=http://localhost:8000
 
 # Optional local Gemini route (`POST /api/panel-recommend`)
 GEMINI_API_KEY=

@@ -60,9 +60,20 @@ pip install -r requirements-onnx.txt
 2) Train + export an ONNX model (see `train_roofsat/README.md`), then point the service at it:
 
 ```bash
-export ROOFSEG_ONNX_PATH=/absolute/path/to/roofsat_unet.onnx
-export ROOFSEG_INPUT_SIZE=512
-export ROOFSEG_THRESHOLD=0.5
+ export ROOFSEG_ONNX_PATH=/absolute/path/to/roofsat_unet.onnx
+ export ROOFSEG_INPUT_SIZE=512
+ export ROOFSEG_THRESHOLD=0.5
+ # Optional: try multiple thresholds (helps on very bright/white roofs)
+ export ROOFSEG_THRESHOLD_SWEEP=1
+ # Optional: boost white roofs in postprocessing (0..0.5)
+ export ROOFSEG_WHITE_BOOST=0.18
+ # Optional: heuristic-only threshold (used if ONNX+SAM unavailable)
+ export ROOFSEG_WHITE_THRESHOLD=0.42
+
+ # Optional: tiled inference for large urban scenes (apartments/condos)
+ # Values: 0|1|auto
+ export ROOFSEG_TILED=auto
+ export ROOFSEG_TILE_OVERLAP=0.25
 ```
 
 3) Restart `uvicorn`.

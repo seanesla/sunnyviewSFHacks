@@ -16,6 +16,19 @@ def _as_hwc_rgb(img_bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    v = os.getenv(name, default)
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_tiled_mode() -> str:
+    v = os.getenv("ROOFSEG_TILED", "0")
+    v = str(v).strip().lower()
+    if v in ("auto", "a"):
+        return "auto"
+    return "on" if v in ("1", "true", "yes", "on") else "off"
+
+
 class OnnxRoofSeg:
     """Lazy-loaded ONNX binary roof/building segmentation.
 
@@ -88,11 +101,26 @@ class OnnxRoofSeg:
             raise RuntimeError(self.error or "ONNX model unavailable")
 
         h, w = img_bgr.shape[:2]
+
+        tiled_mode = _env_tiled_mode()
+        tiled = tiled_mode == "on" or (tiled_mode == "auto" and (h > self.size or w > self.size))
+        if tiled and h >= self.size and w >= self.size and (h > self.size or w > self.size):
+            return self._predict_prob_tiled(img_bgr)
+
         img_rgb = _as_hwc_rgb(img_bgr)
-        inp = cv2.resize(img_rgb, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+        y_f = self._predict_prob_fixed(img_rgb)
+        prob = cv2.resize(y_f, (w, h), interpolation=cv2.INTER_LINEAR)
+        return prob.astype(np.float32)
+
+    def _predict_prob_fixed(self, img_rgb: np.ndarray) -> np.ndarray:
+        """Runs the model on a single image and returns (S,S) probs."""
+        inp = (
+            cv2.resize(img_rgb, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+            if img_rgb.shape[0] != self.size or img_rgb.shape[1] != self.size
+            else img_rgb
+        )
         x = inp.astype(np.float32) / 255.0
 
-        # ImageNet normalization (matches common encoders).
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         x = (x - mean) / std
@@ -105,20 +133,56 @@ class OnnxRoofSeg:
         if y.ndim == 4:
             y = y[0]
         if y.ndim == 3 and y.shape[0] in (1, 2):
-            # Assume [C,H,W], take channel 0 as logits/prob for building.
             y = y[0]
         if y.ndim != 2:
             raise RuntimeError(f"Unexpected ONNX output shape: {tuple(np.asarray(out).shape)}")
 
-        # Heuristic: if output looks like logits (wide range), sigmoid it.
         y_f = y.astype(np.float32)
         y_min = float(np.min(y_f))
         y_max = float(np.max(y_f))
         if y_min < 0.0 or y_max > 1.0:
             y_f = _sigmoid(y_f)
-        y_f = np.clip(y_f, 0.0, 1.0)
+        return np.clip(y_f, 0.0, 1.0)
 
-        prob = cv2.resize(y_f, (w, h), interpolation=cv2.INTER_LINEAR)
+    def _predict_prob_tiled(self, img_bgr: np.ndarray) -> np.ndarray:
+        """Sliding-window inference to preserve resolution on large tiles."""
+        h, w = img_bgr.shape[:2]
+        if h < self.size or w < self.size:
+            # Fallback to single-pass resize.
+            img_rgb = _as_hwc_rgb(img_bgr)
+            y_f = self._predict_prob_fixed(img_rgb)
+            return cv2.resize(y_f, (w, h), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+
+        overlap_raw = os.getenv("ROOFSEG_TILE_OVERLAP", "0.25").strip()
+        try:
+            overlap = float(overlap_raw)
+        except Exception:
+            overlap = 0.25
+        overlap = float(np.clip(overlap, 0.0, 0.75))
+        stride = int(round(self.size * (1.0 - overlap)))
+        stride = max(64, min(self.size, stride))
+
+        xs = list(range(0, max(1, w - self.size + 1), stride))
+        ys = list(range(0, max(1, h - self.size + 1), stride))
+        last_x = w - self.size
+        last_y = h - self.size
+        if xs[-1] != last_x:
+            xs.append(last_x)
+        if ys[-1] != last_y:
+            ys.append(last_y)
+
+        prob_sum = np.zeros((h, w), dtype=np.float32)
+        w_sum = np.zeros((h, w), dtype=np.float32)
+
+        for y0 in ys:
+            for x0 in xs:
+                tile_bgr = img_bgr[y0 : y0 + self.size, x0 : x0 + self.size]
+                tile_rgb = _as_hwc_rgb(tile_bgr)
+                p = self._predict_prob_fixed(tile_rgb)
+                prob_sum[y0 : y0 + self.size, x0 : x0 + self.size] += p
+                w_sum[y0 : y0 + self.size, x0 : x0 + self.size] += 1.0
+
+        prob = prob_sum / np.maximum(w_sum, 1e-6)
         return prob.astype(np.float32)
 
     def predict_prob_roi(self, img_bgr: np.ndarray, roi_bounds: Tuple[int, int, int, int]) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:

@@ -9,7 +9,13 @@ _SEGMENTER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _SEGMENTER_DIR not in sys.path:
     sys.path.insert(0, _SEGMENTER_DIR)
 
-from postprocess import choose_component_by_footprint, extract_geojson_ring, mask_to_polygon_norm, ring_norm_to_mask
+from postprocess import (
+    choose_component_by_footprint,
+    extract_geojson_ring,
+    keep_component,
+    mask_to_polygon_norm,
+    ring_norm_to_mask,
+)
 
 
 class TestPostprocess(unittest.TestCase):
@@ -57,6 +63,24 @@ class TestPostprocess(unittest.TestCase):
         self.assertEqual(poly.get("type"), "Polygon")
         coords = poly.get("coordinates")
         self.assertTrue(isinstance(coords, list))
+
+    def test_keep_component_click_in_hole_prefers_nearest(self) -> None:
+        # Courtyard-style roof: click lands in a hole inside the roof mask.
+        m = np.zeros((160, 160), dtype=np.uint8)
+
+        # Large far-away component (would be selected by "largest" fallback).
+        # Keep a 2px gap to avoid 8-connectivity diagonal merging.
+        m[0:58, 0:58] = 1
+
+        # Donut component around the click.
+        m[70:110, 70:110] = 1
+        m[80:100, 80:100] = 0
+
+        chosen = keep_component(m, cx=90, cy=90)
+
+        # Should pick the donut, not the far-away block.
+        self.assertEqual(int(chosen[10:40, 10:40].sum()), 0)
+        self.assertGreater(int(chosen[72:108, 72:108].sum()), 200)
 
 
 if __name__ == "__main__":

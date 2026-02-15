@@ -8,6 +8,8 @@ type BackgroundSpec =
   | { kind: "image"; src: string; widthPx: number; heightPx: number }
   | { kind: "osm"; lat: number; lng: number; zoom: number }
 
+type SegmentRoi = { x: number; y: number; w: number; h: number }
+
 const MAX_TILE_CACHE_SIZE = 220
 
 function clamp(n: number, min: number, max: number) {
@@ -132,7 +134,7 @@ export function RoofCanvas({
   mode?: "edit" | "view"
   onVerticesChange?: (next: Point[]) => void
   onClosedChange?: (next: boolean) => void
-  onAutoOutline?: () => void
+  onAutoOutline?: (opts?: { roi?: SegmentRoi | null }) => void
   autoOutlineBusy?: boolean
   autoOutlineError?: string | null
   autoOutlineHint?: string | null
@@ -171,6 +173,7 @@ export function RoofCanvas({
   const [rectStart, setRectStart] = useState<Point | null>(null)
   const [rectEnd, setRectEnd] = useState<Point | null>(null)
   const [drawingRect, setDrawingRect] = useState(false)
+  const [showNearby, setShowNearby] = useState(false)
 
   const imageWidth = background.kind === "image" ? background.widthPx : null
   const imageHeight = background.kind === "image" ? background.heightPx : null
@@ -183,6 +186,20 @@ export function RoofCanvas({
     if (background.kind === "osm") return { w: 1024, h: 640 }
     return { w: 1024, h: 640 }
   }, [background.kind, imageHeight, imageWidth])
+
+  const rectangleRoi = useMemo(() => {
+    if (background.kind !== "image") return null
+    if (tool !== "rectangle") return null
+    if (!closed) return null
+    if (vertices.length < 4) return null
+    const { minX, minY, maxX, maxY } = bboxOf(vertices)
+    const pad = 14
+    const x = clamp(Math.floor(minX - pad), 0, Math.max(0, internalSize.w - 1))
+    const y = clamp(Math.floor(minY - pad), 0, Math.max(0, internalSize.h - 1))
+    const w = clamp(Math.ceil(maxX - minX + pad * 2), 1, internalSize.w - x)
+    const h = clamp(Math.ceil(maxY - minY + pad * 2), 1, internalSize.h - y)
+    return { x, y, w, h } satisfies SegmentRoi
+  }, [background.kind, closed, internalSize.h, internalSize.w, tool, vertices])
 
   const clampViewToBounds = useCallback(
     (next: { zoom: number; panX: number; panY: number }) => {
@@ -485,7 +502,7 @@ export function RoofCanvas({
     }
 
     // Candidate outlines (disambiguation)
-    if (mode === "edit" && candidatePolygons && candidatePolygons.length > 0) {
+    if (mode === "edit" && showNearby && candidatePolygons && candidatePolygons.length > 0) {
       const colors = [
         "rgba(34,197,94,0.95)",
         "rgba(59,130,246,0.95)",
@@ -580,6 +597,7 @@ export function RoofCanvas({
     rectEnd,
     rectStart,
     tool,
+    showNearby,
     autoOutlineBusy,
     autoOutlineError,
     autoOutlineHint,
@@ -784,7 +802,7 @@ export function RoofCanvas({
         return
       }
 
-      if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
+      if (showNearby && candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
         for (const c of candidatePolygons) {
           if (pointInPolygon(internal, c.polygon)) {
             candidateDownRef.current = c.id
@@ -812,7 +830,7 @@ export function RoofCanvas({
         startPanY: panY,
       }
     },
-    [candidatePolygons, closed, mode, onClosedChange, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
+    [candidatePolygons, closed, mode, onClosedChange, onPickCandidate, onVerticesChange, showNearby, toInternal, tool, vertices]
   )
 
   const onPointerMove = useCallback(
@@ -918,7 +936,7 @@ export function RoofCanvas({
       setRectEnd(null)
       setDraggingIdx(null)
 
-      if (mode === "edit" && candidateDownRef.current && !movedRef.current && onPickCandidate) {
+      if (showNearby && mode === "edit" && candidateDownRef.current && !movedRef.current && onPickCandidate) {
         onPickCandidate(candidateDownRef.current)
       }
       candidateDownRef.current = null
@@ -949,7 +967,7 @@ export function RoofCanvas({
       downPosRef.current = null
       movedRef.current = false
     },
-    [closed, drawingRect, mode, onClosedChange, onPickCandidate, onVerticesChange, rectEnd, rectStart, tool, vertices]
+    [closed, drawingRect, mode, onClosedChange, onPickCandidate, onVerticesChange, rectEnd, rectStart, showNearby, tool, vertices]
   )
 
   const onDoubleClick = useCallback(
@@ -966,7 +984,7 @@ export function RoofCanvas({
       const hitVertex = vertices.length > 0 ? nearestVertexIdx(internal, vertices, 12 / internal.scale) : null
       if (hitVertex !== null) return
 
-      if (candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
+      if (showNearby && candidatePolygons && candidatePolygons.length > 0 && onPickCandidate) {
         for (const c of candidatePolygons) {
           if (pointInPolygon(internal, c.polygon)) {
             onPickCandidate(c.id)
@@ -999,7 +1017,7 @@ export function RoofCanvas({
       // Unclosed polygon: double-click adds a new point.
       onVerticesChange?.([...vertices, { x: internal.x, y: internal.y }])
     },
-    [candidatePolygons, closed, mode, onPickCandidate, onVerticesChange, toInternal, tool, vertices]
+    [candidatePolygons, closed, mode, onPickCandidate, onVerticesChange, showNearby, toInternal, tool, vertices]
   )
 
   return (
@@ -1017,29 +1035,76 @@ export function RoofCanvas({
             <button
               type="button"
               className={`rounded-md px-3 py-1.5 text-xs font-medium ${
-                tool === "rectangle" ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                showNearby
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
               }`}
               onClick={() => {
-                setTool((t) => (t === "rectangle" ? "polygon" : "rectangle"))
-                setRectStart(null)
-                setRectEnd(null)
-                setDrawingRect(false)
-                onVerticesChange?.([])
-                onClosedChange?.(false)
+                const next = !showNearby
+                setShowNearby(next)
+                if (!next && tool === "rectangle") {
+                  setTool("polygon")
+                  setRectStart(null)
+                  setRectEnd(null)
+                  setDrawingRect(false)
+                }
               }}
-              title={tool === "rectangle" ? "Switch back to polygon trace" : "Draw a roof rectangle"}
+              title={showNearby ? "Hide nearby roofs" : "Edit: show nearby roofs"}
             >
-              {tool === "rectangle" ? "Rectangle: On" : "Rectangle"}
+              {showNearby ? "Edit: On" : "Edit"}
             </button>
+
+            {showNearby && (
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                  tool === "rectangle"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                }`}
+                onClick={() => {
+                  setTool((t) => (t === "rectangle" ? "polygon" : "rectangle"))
+                  setRectStart(null)
+                  setRectEnd(null)
+                  setDrawingRect(false)
+                  onVerticesChange?.([])
+                  onClosedChange?.(false)
+                }}
+                title={tool === "rectangle" ? "Switch back to polygon trace" : "Draw a focus rectangle"}
+              >
+                {tool === "rectangle" ? "ROI: On" : "ROI"}
+              </button>
+            )}
             {onAutoOutline && (
               <button
                 type="button"
                 className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
-                onClick={onAutoOutline}
-                disabled={background.kind !== "image" || autoOutlineBusy}
-                title={background.kind !== "image" ? "Auto-outline requires an image." : "Auto-outline"}
+                onClick={() => {
+                  if (tool === "rectangle") onAutoOutline?.({ roi: rectangleRoi })
+                  else onAutoOutline?.()
+                }}
+                disabled={
+                  background.kind !== "image" ||
+                  autoOutlineBusy ||
+                  (tool === "rectangle" && rectangleRoi === null)
+                }
+                title={
+                  background.kind !== "image"
+                    ? "Auto-outline requires an image."
+                    : tool === "rectangle"
+                      ? rectangleRoi
+                        ? "Auto-line from rectangle"
+                        : "Draw a rectangle first"
+                      : "Auto-outline"
+                }
               >
-                {autoOutlineBusy ? "Auto-outlining…" : "Auto-outline"}
+                {tool === "rectangle"
+                  ? autoOutlineBusy
+                    ? "Auto-lining…"
+                    : "Auto-line"
+                  : autoOutlineBusy
+                    ? "Auto-outlining…"
+                    : "Auto-outline"}
               </button>
             )}
             {!closed && (

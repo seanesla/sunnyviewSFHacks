@@ -62,7 +62,7 @@ def mask_iou(a: np.ndarray, b: np.ndarray) -> float:
 
 def keep_component(mask: np.ndarray, cx: int, cy: int) -> np.ndarray:
     m = (mask > 0).astype(np.uint8)
-    n, labels = cv2.connectedComponents(m)
+    n, labels, stats, centroids = cv2.connectedComponentsWithStats(m)
     if n <= 1:
         return m
     cx = int(np.clip(cx, 0, labels.shape[1] - 1))
@@ -71,14 +71,22 @@ def keep_component(mask: np.ndarray, cx: int, cy: int) -> np.ndarray:
     if lab != 0:
         return (labels == lab).astype(np.uint8)
 
-    # Click is outside; keep the largest component.
-    areas = []
+    # Click is outside (or inside a hole). Choose the component whose centroid is closest
+    # to the click. This is much more robust for courtyard-style apartment roofs where the
+    # click often lands in the interior void.
+    best_lab = 0
+    best_d2 = 1e30
+    best_area = -1
     for i in range(1, n):
-        areas.append((int((labels == i).sum()), i))
-    areas.sort(reverse=True)
-    if not areas:
-        return m
-    return (labels == areas[0][1]).astype(np.uint8)
+        ccx, ccy = centroids[i]
+        d2 = float(ccx - float(cx)) ** 2 + float(ccy - float(cy)) ** 2
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if d2 < best_d2 - 1e-9 or (abs(d2 - best_d2) <= 1e-9 and area > best_area):
+            best_lab = i
+            best_d2 = d2
+            best_area = area
+
+    return (labels == best_lab).astype(np.uint8) if best_lab != 0 else m
 
 
 def mask_to_polygon_norm(mask: np.ndarray, w: int, h: int) -> Optional[Dict[str, Any]]:

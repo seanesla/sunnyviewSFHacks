@@ -215,7 +215,6 @@ function buildingTypePenalty(tags: OverpassTagMap, residentialIntent: boolean) {
   if (!residentialIntent) return 0
   const b = (tags.building ?? "").toLowerCase()
   if (!b) return 0
-  if (b.includes("apart")) return -0.1
   if (b.includes("commercial") || b.includes("industrial") || b.includes("retail") || b.includes("school")) return -0.4
   if (b.includes("church") || b.includes("cathedral")) return -0.6
   return 0
@@ -251,7 +250,11 @@ export function rankBuildingCandidates(opts: {
     const typePenalty = buildingTypePenalty(r.tags, residentialIntent)
 
     let score = 0
-    score += addrScore * 2000
+
+    // Address tags are helpful, but can be wrong/out-of-date in dense areas.
+    // Gate the boost by how close the focus point is to the footprint.
+    const addrGate = contains ? 1 : Math.max(0, Math.min(1, 1 - boundaryM / 180))
+    score += addrScore * 2000 * addrGate
     score += contains ? 1200 : 0
     score += Math.max(0, 450 - boundaryM) * 2
     score += Math.max(0, 120 - centroidM) * 0.5
@@ -291,11 +294,17 @@ export function pickTopOrCandidates(scored: BuildingCandidate[]) {
   const gap = second ? best.score - second.score : Infinity
 
   const boundaryM = Math.sqrt(best.boundaryD2)
+  const centroidM = Math.sqrt(best.centroidD2)
   const deepInside = best.containsFocus && boundaryM >= 8
 
   // Be strict: auto-pick only when we're very sure.
   // If the address point is not inside the footprint, prefer user disambiguation.
-  const confident = best.addrScore >= 1 || (deepInside && gap > 500)
+  const addrStrong = best.addrScore >= 2
+  const addrClose = best.containsFocus || boundaryM < 35 || centroidM < 55
+  const addrConfident = addrStrong && addrClose && gap > 250
+  const geoConfident = deepInside && gap > 500
+
+  const confident = addrConfident || geoConfident
   if (confident) return { kind: "single" as const, best }
 
   // Return a few candidates for user disambiguation.

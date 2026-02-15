@@ -521,10 +521,20 @@ export async function GET(req: NextRequest) {
       return a.displayName.localeCompare(b.displayName)
     })
 
-    const warning =
+    const qHouse = parseHouseNumber(q)
+
+    let warning: string | null =
       ambiguous && results.length > 1
         ? "This address looks ambiguous. Add city/state (e.g., “..., Los Angeles, CA”) or pick a match below."
         : null
+
+    if (qHouse && results.length > 0) {
+      const rx = new RegExp(`\\b${qHouse}\\b`)
+      const hasHouse = results.some((r) => rx.test(r.displayName))
+      if (!hasHouse) {
+        warning = "House number not found. Results are street-level; zoom in and use Rectangle -> Auto-line."
+      }
+    }
 
     const payload = { results, warning }
     cacheSet(cacheKey, payload)
