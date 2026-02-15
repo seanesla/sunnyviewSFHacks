@@ -3,6 +3,7 @@
 import { AuroraBackground } from "@/components/AuroraBackground"
 import { MouseSpotlight } from "@/components/MouseSpotlight"
 import { PixelGrid } from "@/components/pixel-grid"
+import { RaindropGrid } from "@/components/raindrop-grid"
 import { type BackgroundMode, useBackground } from "@/lib/background-context"
 import { cn } from "@/lib/utils"
 
@@ -15,6 +16,7 @@ export function BackgroundScene({ mode, transitionMs = 760 }: BackgroundScenePro
   const { mode: contextMode, motion, intensity, spotlight } = useBackground()
   const activeMode = mode ?? contextMode
   const gridMode = activeMode === "grid"
+  const gridDensity = gridMode ? 1.0 : 0.82
 
   return (
     <>
@@ -29,7 +31,7 @@ export function BackgroundScene({ mode, transitionMs = 760 }: BackgroundScenePro
       </div>
 
       <PixelGrid
-        density={gridMode ? 1.0 : 0.82}
+        density={gridDensity}
         intensity={intensity}
         motion={motion}
         className={cn(
@@ -37,6 +39,17 @@ export function BackgroundScene({ mode, transitionMs = 760 }: BackgroundScenePro
           gridMode
             ? "opacity-95 [filter:contrast(1.08)_brightness(0.84)]"
             : "opacity-52 [filter:contrast(0.96)_brightness(0.9)]"
+        )}
+      />
+
+      <RaindropGrid
+        active={gridMode}
+        density={gridDensity}
+        intensity={intensity}
+        motion={motion}
+        className={cn(
+          "transition-opacity duration-700 ease-[cubic-bezier(0.2,0.85,0.2,1)]",
+          gridMode ? "opacity-85" : "opacity-0"
         )}
       />
 

@@ -1,46 +1,58 @@
 # Sunnyview
 
-Sunnyview is a fast rooftop solar feasibility demo built for SF Hacks 2026.
-In about 30 seconds, a user can trace a roof and get quick panel, energy, and CO2 estimates.
+[![Live Site](https://img.shields.io/badge/Live-sunnyview--sf--hacks.vercel.app-0ea5e9?style=for-the-badge)](https://sunnyview-sf-hacks.vercel.app)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?style=for-the-badge)](https://www.typescriptlang.org/)
 
-## Architecture diagrams
+Fast rooftop solar feasibility demo from SF Hacks 2026.
+
+## Live Demo
+
+- Site: https://sunnyview-sf-hacks.vercel.app
+
+## Team
+
+- [Md Safkatul Islam](https://www.linkedin.com/in/md-safkatul-islam/)
+- [Sean Esla](https://www.linkedin.com/in/seanesla/)
+- [Kai Shimoda](https://www.linkedin.com/in/kai-shimoda/)
+- [Aleks Ershov](https://www.linkedin.com/in/aleksershov)
+
+## Architecture Diagrams
 
 General architecture:
 
 ![Sunnyview general architecture diagram](structurizr/diagrams/general-architecture.png)
 
-Main feature (trace roof -> layout -> estimate flow):
+Main feature flow:
 
 ![Sunnyview main feature flow diagram](structurizr/diagrams/main-feature.png)
 
-## What is in this repo
+## What This Repo Contains
 
-- Next.js frontend demo app (App Router)
+- Next.js app (App Router)
 - Deterministic panel-packing logic
-- Local API routes implemented here:
+- Local API routes:
   - `/api/geocode`
   - `/api/static-map`
   - `/api/reverse-geocode`
   - `/api/estimate`
-  - `/api/segment` (OSM outline fallback; optional Python CV service)
+  - `/api/segment`
   - `/api/explain`
   - `/api/tts`
   - `/api/forecast`
   - `/api/panel-recommend`
   - `/api/gemini-validate`
 
-## External dependencies (not implemented in this repo)
+## External Dependencies
 
-These routes require a separate backend service and are optional integrations:
+These are optional and require a separate backend service:
 
 - `POST /api/projects`
- - `GET /api/projects/:id`
- - `PATCH /api/projects/:id`
- - `GET /s/:shareSlug` (JSON snapshot endpoint)
+- `GET /api/projects/:id`
+- `PATCH /api/projects/:id`
+- `GET /s/:shareSlug`
 
-If those endpoints are missing, the app still runs in local demo mode with fallbacks.
-
-## Quick start
+## Quick Start
 
 Requirements: Node.js 20+ and npm.
 
@@ -52,51 +64,13 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Optional `.env.local` values:
-
-```bash
-# External backend for share/estimate/AI routes
-NEXT_PUBLIC_API_ORIGIN=http://localhost:3001
-
-# Optional Cesium ion imagery
-NEXT_PUBLIC_CESIUM_ION_TOKEN=
-
-  # Optional legacy components only
-  NEXT_PUBLIC_MAPBOX_TOKEN=
-
-  # Optional local CV segmenter (FastAPI). See `services/segmenter/README.md`.
-  SEGMENT_SERVICE_URL=http://localhost:8000
-
-# Optional local Gemini route (`POST /api/panel-recommend`)
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.5-flash
-```
-
-## How to use
-
-1. Launch the demo.
-2. Search for the house address.
-3. Trace the roof polygon.
-4. Adjust assumptions.
-5. Review panel count, DC kW, annual kWh, and annual CO2.
-6. Use Share/Explain/TTS only when external backend routes are connected.
-
 ## Scripts
 
-- `npm run dev` - start development server
-- `npm run build` - build production bundle
-- `npm run start` - run production server
-- `npm run lint` - run ESLint
-
-Recommended verification:
-
-```bash
-npm run lint
-npx tsc --noEmit
-npm run build
-```
+- `npm run dev` - start dev server
+- `npm run build` - production build
+- `npm run start` - start production server
+- `npm run lint` - lint codebase
 
 ## Notes
 
 - Estimates are directional, not permit-ready engineering output.
-- Accuracy depends on roof tracing quality and scale calibration.
