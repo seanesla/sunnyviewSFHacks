@@ -8,10 +8,12 @@ import { AccentProvider } from '@/lib/accent-context'
 import { BackgroundProvider } from '@/lib/background-context'
 import { UiStyleProvider } from '@/lib/ui-style-context'
 import { RouteTransition } from '@/components/route-transition'
+import sunnyviewFavicon from '@/sunnyviewfavicon.svg'
 import sunnyviewLogo from '@/sunnyviewlogo.svg'
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const sunnyviewFaviconSrc = typeof sunnyviewFavicon === 'string' ? sunnyviewFavicon : sunnyviewFavicon.src
 const sunnyviewLogoSrc = typeof sunnyviewLogo === 'string' ? sunnyviewLogo : sunnyviewLogo.src
 
 export const metadata: Metadata = {
@@ -21,19 +23,11 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
+        url: sunnyviewFaviconSrc,
         type: 'image/svg+xml',
       },
     ],
-    apple: '/apple-icon.png',
+    shortcut: sunnyviewFaviconSrc,
   },
 }
 

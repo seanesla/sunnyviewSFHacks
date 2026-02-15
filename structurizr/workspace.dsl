@@ -79,16 +79,16 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
 
             element "Boundary" {
                 background #05060A
-                color #94A3B8
-                stroke #334155
-                strokeWidth 2
+                color #05060A
+                stroke #05060A
+                strokeWidth 1
             }
 
             element "Group" {
                 background #05060A
-                color #94A3B8
-                stroke #334155
-                strokeWidth 2
+                color #05060A
+                stroke #05060A
+                strokeWidth 1
                 border Dashed
             }
 
