@@ -3,6 +3,16 @@
 Sunnyview is a fast rooftop solar feasibility demo built for SF Hacks 2026.
 In about 30 seconds, a user can trace a roof and get quick panel, energy, and CO2 estimates.
 
+## Architecture diagrams
+
+General architecture:
+
+![Sunnyview general architecture diagram](structurizr/diagrams/general-architecture.png)
+
+Main feature (trace roof -> layout -> estimate flow):
+
+![Sunnyview main feature flow diagram](structurizr/diagrams/main-feature.png)
+
 ## What is in this repo
 
 - Next.js frontend demo app (App Router)

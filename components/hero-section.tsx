@@ -19,18 +19,32 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
   const [geminiKey, setGeminiKey] = useState("")
   const [showGeminiKey, setShowGeminiKey] = useState(false)
 
+  const [elevenLabsKey, setElevenLabsKey] = useState("")
+  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState("")
+  const [showElevenLabsKey, setShowElevenLabsKey] = useState(false)
+
   const [geminiOnlineKey, setGeminiOnlineKey] = useState<string | null>(null)
   const [geminiOnlineOk, setGeminiOnlineOk] = useState<boolean | null>(null)
   const validateAbortRef = useRef<AbortController | null>(null)
 
+  const [elevenLabsOnlineKey, setElevenLabsOnlineKey] = useState<string | null>(null)
+  const [elevenLabsOnlineOk, setElevenLabsOnlineOk] = useState<boolean | null>(null)
+  const elevenValidateAbortRef = useRef<AbortController | null>(null)
+
   useEffect(() => {
-    const k = "sunnyview-gemini-api-key-v1"
+    const geminiStorageKey = "sunnyview-gemini-api-key-v1"
+    const elevenStorageKey = "sunnyview-elevenlabs-api-key-v1"
+    const elevenVoiceStorageKey = "sunnyview-elevenlabs-voice-id-v1"
     let cancelled = false
     const t = window.setTimeout(() => {
       if (cancelled) return
       try {
-        const v = window.localStorage.getItem(k)
-        if (v) setGeminiKey(v)
+        const g = window.localStorage.getItem(geminiStorageKey)
+        if (g) setGeminiKey(g)
+        const e = window.localStorage.getItem(elevenStorageKey)
+        if (e) setElevenLabsKey(e)
+        const v = window.localStorage.getItem(elevenVoiceStorageKey)
+        if (v) setElevenLabsVoiceId(v)
       } catch {
         // ignore
       }
@@ -54,6 +68,32 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
     }, 120)
     return () => window.clearTimeout(t)
   }, [geminiKey])
+
+  useEffect(() => {
+    const k = "sunnyview-elevenlabs-api-key-v1"
+    const t = window.setTimeout(() => {
+      try {
+        if (elevenLabsKey.trim().length === 0) window.localStorage.removeItem(k)
+        else window.localStorage.setItem(k, elevenLabsKey)
+      } catch {
+        // ignore
+      }
+    }, 120)
+    return () => window.clearTimeout(t)
+  }, [elevenLabsKey])
+
+  useEffect(() => {
+    const k = "sunnyview-elevenlabs-voice-id-v1"
+    const t = window.setTimeout(() => {
+      try {
+        if (elevenLabsVoiceId.trim().length === 0) window.localStorage.removeItem(k)
+        else window.localStorage.setItem(k, elevenLabsVoiceId)
+      } catch {
+        // ignore
+      }
+    }, 120)
+    return () => window.clearTimeout(t)
+  }, [elevenLabsVoiceId])
 
   useEffect(() => {
     const raw = geminiKey.trim()
@@ -92,6 +132,45 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       ac.abort()
     }
   }, [geminiKey])
+
+  useEffect(() => {
+    const raw = elevenLabsKey.trim()
+    elevenValidateAbortRef.current?.abort()
+
+    if (!raw) return
+    if (raw.length < 20) return
+    if (/\s/.test(raw)) return
+
+    const ac = new AbortController()
+    elevenValidateAbortRef.current = ac
+
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await fetch("/api/elevenlabs-validate", {
+          method: "POST",
+          signal: ac.signal,
+          headers: {
+            "content-type": "application/json",
+            "x-elevenlabs-api-key": raw,
+          },
+          body: JSON.stringify({}),
+        })
+        const data = (await res.json().catch(() => null)) as any
+        if (ac.signal.aborted) return
+        setElevenLabsOnlineKey(raw)
+        setElevenLabsOnlineOk(data?.ok === true)
+      } catch {
+        if (ac.signal.aborted) return
+        setElevenLabsOnlineKey(raw)
+        setElevenLabsOnlineOk(false)
+      }
+    }, 260)
+
+    return () => {
+      window.clearTimeout(t)
+      ac.abort()
+    }
+  }, [elevenLabsKey])
 
   useEffect(() => {
     if (!visible) {
@@ -136,6 +215,19 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             : "invalid"
           : "checking"
 
+  const rawElevenLabsKey = elevenLabsKey.trim()
+  const elevenLabsFormatOk = rawElevenLabsKey.length >= 20 && !/\s/.test(rawElevenLabsKey)
+  const elevenLabsKeyState: "idle" | "checking" | "valid" | "invalid" =
+    rawElevenLabsKey.length === 0
+      ? "idle"
+      : !elevenLabsFormatOk
+        ? "invalid"
+        : elevenLabsOnlineKey === rawElevenLabsKey
+          ? elevenLabsOnlineOk
+            ? "valid"
+            : "invalid"
+          : "checking"
+
   useLayoutEffect(() => {
     if (!visible) return
 
@@ -151,10 +243,10 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       leave: () => void
     }> = []
 
-    const ctx = gsap.context(() => {
-      const staged = q(
-        "[data-motion='logo'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='gemini']"
-      )
+      const ctx = gsap.context(() => {
+        const staged = q(
+          "[data-motion='logo'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='gemini'], [data-motion='eleven']"
+        )
 
       if (!reduceMotion) {
         gsap.fromTo(
@@ -307,7 +399,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         </span>
       </div>
 
-      <div className="hero-landing__gemini glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="gemini">
+      <div className="hero-landing__keycard glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="gemini">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-xs font-semibold tracking-wide text-foreground uppercase">Gemini API key</div>
@@ -359,6 +451,75 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
                   : "border-input focus-visible:ring-primary/50")
             }
           />
+        </div>
+      </div>
+
+      <div className="hero-landing__keycard glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="eleven">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold tracking-wide text-foreground uppercase">ElevenLabs API key</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              Stored locally in this browser (localStorage). Format + live check. Only sent to same-origin `/api/tts`.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className={
+                elevenLabsKeyState === "valid"
+                  ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+                  : elevenLabsKeyState === "checking"
+                    ? "rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200"
+                    : elevenLabsKeyState === "invalid"
+                      ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
+                      : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
+              }
+            >
+              {elevenLabsKeyState === "valid"
+                ? "Valid"
+                : elevenLabsKeyState === "checking"
+                  ? "Checking…"
+                  : elevenLabsKeyState === "invalid"
+                    ? "Invalid"
+                    : "Optional"}
+            </div>
+            <button
+              type="button"
+              className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
+              onClick={() => setShowElevenLabsKey((v) => !v)}
+            >
+              {showElevenLabsKey ? "Hide" : "Show"}
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2">
+          <input
+            value={elevenLabsKey}
+            onChange={(e) => setElevenLabsKey(e.target.value)}
+            type={showElevenLabsKey ? "text" : "password"}
+            placeholder="Paste your ElevenLabs API key"
+            autoComplete="off"
+            spellCheck={false}
+            className={
+              "h-10 w-full rounded-lg border bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 " +
+              (elevenLabsKeyState === "valid"
+                ? "border-emerald-400/55 focus-visible:ring-emerald-400/35"
+                : elevenLabsKeyState === "invalid" && rawElevenLabsKey.length > 0
+                  ? "border-rose-400/55 focus-visible:ring-rose-400/35"
+                  : "border-input focus-visible:ring-primary/50")
+            }
+          />
+          <input
+            value={elevenLabsVoiceId}
+            onChange={(e) => setElevenLabsVoiceId(e.target.value)}
+            type="text"
+            placeholder="Voice ID (optional)"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          />
+          <div className="text-xs text-muted-foreground">
+            If `NEXT_PUBLIC_API_ORIGIN` is set, this key will not be sent. Configure ElevenLabs on that backend instead.
+          </div>
         </div>
       </div>
     </div>

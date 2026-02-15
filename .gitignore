@@ -25,3 +25,8 @@ dev.log
 .DS_Store
 CLAUDE.md
 .vercel
+
+# Structurizr exports / downloaded tooling
+structurizr/bin/
+structurizr/out/
+structurizr/*.zip

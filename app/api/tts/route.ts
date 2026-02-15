@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         audioUrl: null,
-        note: "Text-to-speech is disabled. Add an ElevenLabs API key (local) or set ELEVENLABS_API_KEY on the backend.",
+        note: "Text-to-speech is disabled. Add an ElevenLabs API key on the landing page (stored locally) or set ELEVENLABS_API_KEY on the backend.",
       },
       { status: 200 }
     )

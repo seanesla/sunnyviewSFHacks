@@ -1324,42 +1324,30 @@ export function SunnyviewExperience() {
     caveat: string;
   } | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
-  const [elevenLabsKey, setElevenLabsKey] = useState("");
-  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState("");
-  const [showElevenLabsKey, setShowElevenLabsKey] = useState(false);
-  const [showElevenLabsSettings, setShowElevenLabsSettings] = useState(false);
-
-  useEffect(() => {
-    try {
-      const k = String(window.localStorage.getItem("sunnyview-elevenlabs-api-key-v1") ?? "");
-      const v = String(window.localStorage.getItem("sunnyview-elevenlabs-voice-id-v1") ?? "");
-      if (k) setElevenLabsKey(k);
-      if (v) setElevenLabsVoiceId(v);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      const k = "sunnyview-elevenlabs-api-key-v1";
-      if (elevenLabsKey.trim().length === 0) window.localStorage.removeItem(k);
-      else window.localStorage.setItem(k, elevenLabsKey);
-    } catch {
-      // ignore
-    }
-  }, [elevenLabsKey]);
-
-  useEffect(() => {
-    try {
-      const k = "sunnyview-elevenlabs-voice-id-v1";
-      if (elevenLabsVoiceId.trim().length === 0) window.localStorage.removeItem(k);
-      else window.localStorage.setItem(k, elevenLabsVoiceId);
-    } catch {
-      // ignore
-    }
-  }, [elevenLabsVoiceId]);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [hasLocalElevenLabsKey, setHasLocalElevenLabsKey] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!opened) {
+      setHasLocalElevenLabsKey(null);
+      return;
+    }
+
+    const read = () => {
+      try {
+        const k = String(
+          window.localStorage.getItem("sunnyview-elevenlabs-api-key-v1") ?? "",
+        ).trim();
+        setHasLocalElevenLabsKey(k.length > 0);
+      } catch {
+        setHasLocalElevenLabsKey(false);
+      }
+    };
+
+    read();
+    const t = window.setTimeout(read, 260);
+    return () => window.clearTimeout(t);
+  }, [opened]);
 
   const sceneMode = opened ? "grid" : "fusion";
 
@@ -1433,7 +1421,15 @@ export function SunnyviewExperience() {
     try {
       const headers: Record<string, string> = { "content-type": "application/json" };
 
-      const key = elevenLabsKey.trim();
+      let key = "";
+      try {
+        key = String(
+          window.localStorage.getItem("sunnyview-elevenlabs-api-key-v1") ?? "",
+        ).trim();
+      } catch {
+        key = "";
+      }
+      setHasLocalElevenLabsKey(key.length > 0);
 
       const origin = (() => {
         try {
@@ -1451,10 +1447,16 @@ export function SunnyviewExperience() {
         setActionNotice(
           "ElevenLabs key is stored locally, but this app is configured to use an external backend (NEXT_PUBLIC_API_ORIGIN). For safety, the key is not sent. Set ELEVENLABS_API_KEY on the backend instead."
         );
-        setShowElevenLabsSettings(true);
       }
 
-      const voiceId = elevenLabsVoiceId.trim();
+      let voiceId = "";
+      try {
+        voiceId = String(
+          window.localStorage.getItem("sunnyview-elevenlabs-voice-id-v1") ?? "",
+        ).trim();
+      } catch {
+        voiceId = "";
+      }
 
       const res = await fetch(apiUrl("/api/tts"), {
         method: "POST",
@@ -1477,9 +1479,6 @@ export function SunnyviewExperience() {
             ? data.note
             : "Text-to-speech is not available right now.";
         setActionNotice(note);
-        if (note.toLowerCase().includes("api key") || note.toLowerCase().includes("elevenlabs")) {
-          setShowElevenLabsSettings(true);
-        }
         return;
       }
       const audio = new Audio(audioUrl);
@@ -1490,9 +1489,6 @@ export function SunnyviewExperience() {
           ? e.message
           : "Text-to-speech is not available right now.";
       setActionNotice(message);
-      if (message.toLowerCase().includes("elevenlabs")) {
-        setShowElevenLabsSettings(true);
-      }
     } finally {
       setTtsLoading(false);
     }
@@ -1911,7 +1907,9 @@ export function SunnyviewExperience() {
           }
         }}
         onClosedChange={setClosed}
-        onAutoOutline={(o) => runAutoOutline({ reason: "manual", roi: o?.roi ?? null })}
+        onAutoOutline={(o?: { roi?: { x: number; y: number; w: number; h: number } | null }) => {
+          void runAutoOutline({ reason: "manual", roi: o?.roi ?? null });
+        }}
         autoOutlineBusy={autoOutlineBusy}
         autoOutlineError={autoOutlineError}
         autoOutlineHint={autoOutlineHint}
@@ -2079,74 +2077,19 @@ export function SunnyviewExperience() {
           </button>
         </div>
 
-        {!showElevenLabsSettings && (
+        {!hasBackend && hasLocalElevenLabsKey === false && (
           <button
             type="button"
-            onClick={() => setShowElevenLabsSettings(true)}
+            onClick={returnToLanding}
             className="mt-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground hover:no-underline"
           >
-            Add ElevenLabs key to enable Talk
+            Add ElevenLabs key on landing to enable Talk
           </button>
         )}
 
         {(actionNotice || shareDisabledReason) && (
           <div className="mt-2 text-xs text-muted-foreground">
             {actionNotice ?? shareDisabledReason}
-          </div>
-        )}
-
-        {showElevenLabsSettings && (
-          <div className="glass-surface mt-3 rounded-lg p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-[11px] font-semibold tracking-[0.16em] text-foreground uppercase">
-                  ElevenLabs (optional)
-                </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  Stored locally in this browser (localStorage). Only sent to same-origin `/api/tts`.
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
-                  onClick={() => setShowElevenLabsKey((v) => !v)}
-                >
-                  {showElevenLabsKey ? "Hide" : "Show"}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md bg-secondary px-3 py-1.5 text-[11px] font-medium text-secondary-foreground hover:bg-secondary/80"
-                  onClick={() => setShowElevenLabsSettings(false)}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-2">
-              <input
-                value={elevenLabsKey}
-                onChange={(e) => setElevenLabsKey(e.target.value)}
-                type={showElevenLabsKey ? "text" : "password"}
-                placeholder="Paste your ElevenLabs API key"
-                autoComplete="off"
-                spellCheck={false}
-                className="h-10 w-full rounded-md border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              />
-              <input
-                value={elevenLabsVoiceId}
-                onChange={(e) => setElevenLabsVoiceId(e.target.value)}
-                type="text"
-                placeholder="Voice ID (optional)"
-                autoComplete="off"
-                spellCheck={false}
-                className="h-10 w-full rounded-md border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              />
-              <div className="text-[11px] text-muted-foreground">
-                If you set `NEXT_PUBLIC_API_ORIGIN`, this key will not be sent. Configure ElevenLabs on that backend instead.
-              </div>
-            </div>
           </div>
         )}
 

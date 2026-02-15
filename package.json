@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "diagrams:export": "node structurizr/export-diagrams.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -83,9 +84,11 @@
     "eslint": "^9.20.1",
     "eslint-config-next": "^16.1.6",
     "postcss": "^8.5",
+    "puppeteer-core": "^24.37.3",
     "tailwindcss": "^4.1.9",
     "tw-animate-css": "1.3.3",
     "typescript": "^5",
+    "puppeteer-core": "^24.15.0",
     "vitest": "^2.1.9"
   }
 }
