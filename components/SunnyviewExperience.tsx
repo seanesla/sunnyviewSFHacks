@@ -1675,9 +1675,9 @@ export function SunnyviewExperience() {
           (source === "fallback_rect" || source.includes("fallback_rect") || source.includes("segmenter_error"));
         const lowConfidence = confidence !== null && confidence < 0.32;
         if ((fallbackish || lowConfidence) && !hint) {
-          hint = "Edit -> ROI -> Auto-line.";
+          hint = "Edit -> Auto-outline.";
         } else if (!hint && looksLikeFootprint) {
-          hint = "OSM outline. Edit -> ROI -> Auto-line.";
+          hint = "OSM outline. Edit -> Auto-outline.";
         }
         if (hint) setAutoOutlineHint(hint);
       } catch (e) {
@@ -1911,6 +1911,23 @@ export function SunnyviewExperience() {
             : null
         }
       />
+
+      <div className="glass-card p-3">
+        <div className="text-sm font-semibold text-foreground">Orientation</div>
+        <label className="mt-3 block space-y-1">
+          <div className="text-xs text-muted-foreground">Orientation (deg)</div>
+          <input
+            type="range"
+            min={-90}
+            max={90}
+            step={1}
+            value={orientationDeg}
+            onChange={(e) => setOrientationDeg(Number(e.target.value))}
+            className="w-full"
+          />
+          <div className="text-xs text-muted-foreground">{orientationDeg}°</div>
+        </label>
+      </div>
     </div>
   );
 
@@ -1964,7 +1981,7 @@ export function SunnyviewExperience() {
             <div>
               <div className="text-xs font-semibold text-foreground">Panel model</div>
               <div className="mt-1 text-[11px] text-muted-foreground">
-                {panelChoiceLabel} • {panelSpecMode === "auto" ? "auto" : "manual"} • {panelSpec.widthM.toFixed(2)}m × {panelSpec.heightM.toFixed(2)}m • {Math.round(panelSpec.wattW)}W
+                {panelChoiceLabel} • {panelSpecMode === "auto" ? "auto" : "locked"}
               </div>
             </div>
             <div className="flex gap-2">
@@ -1977,9 +1994,9 @@ export function SunnyviewExperience() {
                   setPanelBrandError(null)
                   lastPanelAutoKeyRef.current = null
                 }}
-                title={panelSpecMode === "auto" ? "Switch to manual panel sizing" : "Switch back to auto"}
+                title={panelSpecMode === "auto" ? "Lock panel model selection" : "Switch back to auto selection"}
               >
-                {panelSpecMode === "auto" ? "Manual" : "Auto"}
+                {panelSpecMode === "auto" ? "Lock" : "Auto"}
               </button>
               <button
                 type="button"
@@ -2139,90 +2156,6 @@ export function SunnyviewExperience() {
             <div className="mt-1 text-[11px] text-muted-foreground">
               Auto fits {panelCountAuto}. Manual resets when you edit the roof or search a new address.
             </div>
-          </div>
-
-          <label className="space-y-1">
-            <div className="text-xs text-muted-foreground">
-              Orientation (deg)
-            </div>
-            <input
-              type="range"
-              min={-90}
-              max={90}
-              step={1}
-              value={orientationDeg}
-              onChange={(e) => setOrientationDeg(Number(e.target.value))}
-              className="w-full"
-            />
-            <div className="text-xs text-muted-foreground">
-              {orientationDeg}°
-            </div>
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Panel W (m)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.widthM}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    widthM: Number(e.target.value) || p.widthM,
-                  }))
-                }}
-                inputMode="decimal"
-              />
-            </label>
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Panel H (m)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.heightM}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    heightM: Number(e.target.value) || p.heightM,
-                  }))
-                }}
-                inputMode="decimal"
-              />
-            </label>
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Watt (W)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.wattW}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    wattW: Number(e.target.value) || p.wattW,
-                  }))
-                }}
-                inputMode="numeric"
-              />
-            </label>
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Gap (m)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.gapM}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    gapM: Number(e.target.value) || p.gapM,
-                  }))
-                }}
-                inputMode="decimal"
-              />
-            </label>
           </div>
         </div>
       </div>
