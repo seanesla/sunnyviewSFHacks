@@ -360,6 +360,13 @@ async function main() {
             rect.setAttribute("ry", "10");
           });
 
+          // Hide relationship text labels in exported README images to avoid clutter
+          // and tiny overlapping text around dense connector areas.
+          svg.querySelectorAll("g.label").forEach((g) => {
+            g.setAttribute("display", "none");
+            g.style.display = "none";
+          });
+
           // Hide any diagram metadata that may have been exported (title/description/logo).
           svg.querySelectorAll(".structurizrMetadata").forEach((el) => {
             el.setAttribute("display", "none");

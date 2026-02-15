@@ -4,50 +4,40 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
         user = person "Homeowner" "Traces a roof and gets quick panel, energy, and CO2 estimates."
 
         sunnyview = softwareSystem "Sunnyview" "Fast rooftop solar feasibility demo." "Internal" {
-            group "Client" {
-                web = container "Web Client" "Search + trace roof polygon; runs deterministic panel packing locally in the browser." "Next.js (React in browser)" "Web"
-            }
-
-            group "Server" {
-                api = container "API / BFF" "Next.js route handlers that proxy external APIs, rate limit, cache, and hide keys." "Next.js Route Handlers (Node.js)" "API"
-                segmenter = container "CV Segmenter" "Optional auto-outline service (roof + obstacles) for /api/segment." "Python (FastAPI)" "ML,Optional"
-            }
-
-            group "Persistence (Optional)" {
-                mongo = container "History Store" "Optional persistence for /api/history (per-visitor Solar Snapshot history)." "MongoDB" "Database,Optional"
-                redis = container "Cache" "Optional Redis cache for PVWatts estimates (24h)." "Upstash Redis" "Cache,Optional"
-            }
+            web = container "Web Client" "Search + trace roof polygon; runs deterministic panel packing locally in the browser." "Next.js (React in browser)" "Web"
+            api = container "API / BFF" "Next.js route handlers that proxy external APIs, rate limit, cache, and hide keys." "Next.js Route Handlers (Node.js)" "API"
+            segmenter = container "CV Segmenter" "Optional auto-outline service (roof + obstacles) for /api/segment." "Python (FastAPI)" "ML,Optional"
+            mongo = container "History Store" "Optional persistence for /api/history (per-visitor Solar Snapshot history)." "MongoDB" "Database,Optional"
+            redis = container "Cache" "Optional Redis cache for PVWatts estimates (24h)." "Upstash Redis" "Cache,Optional"
         }
 
-        group "External Services" {
-            geoApis = softwareSystem "Geospatial APIs (ArcGIS + OSM)" "Geocoding, satellite imagery export, and building footprints (with fallbacks)." "External"
-            solarWeatherApis = softwareSystem "Solar + Weather APIs (PVWatts + Open-Meteo)" "Energy yield + forecast/archive used by estimates and panel recommendations." "External"
-            aiVoiceApis = softwareSystem "AI + Voice APIs (Gemini + ElevenLabs)" "Optional recommendations and narration." "External,Optional"
-            externalBackend = softwareSystem "Sunnyview Backend" "Optional separate backend for project CRUD and share snapshots." "External,Optional"
-        }
+        geoApis = softwareSystem "Geospatial APIs (ArcGIS + OSM)" "Geocoding, satellite imagery export, and building footprints (with fallbacks)." "External"
+        solarWeatherApis = softwareSystem "Solar + Weather APIs (PVWatts + Open-Meteo)" "Energy yield + forecast/archive used by estimates and panel recommendations." "External"
+        aiVoiceApis = softwareSystem "AI + Voice APIs (Gemini + ElevenLabs)" "Optional recommendations and narration." "External,Optional"
+        externalBackend = softwareSystem "Sunnyview Backend" "Optional separate backend for project CRUD and share snapshots." "External,Optional"
 
-        user -> web "Uses"
+        user -> web
 
-        web -> api "Calls /api/*"
-        web -> externalBackend "Optional: projects + share" {
+        web -> api
+        web -> externalBackend {
             tags "Optional"
         }
 
-        api -> geoApis "Geocode + imagery + footprints"
-        api -> segmenter "Optional: CV auto-outline" {
+        api -> geoApis
+        api -> segmenter {
             tags "Optional"
         }
 
-        api -> solarWeatherApis "Estimate + forecast"
-        api -> aiVoiceApis "Recommendations + narration" {
+        api -> solarWeatherApis
+        api -> aiVoiceApis {
             tags "Optional"
         }
 
-        api -> mongo "Optional: history snapshots" {
+        api -> mongo {
             tags "Optional"
         }
 
-        api -> redis "Optional: PVWatts cache" {
+        api -> redis {
             tags "Optional"
         }
     }
@@ -60,26 +50,19 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
         container sunnyview "general-architecture" {
             title "SUNNYVIEW / GENERAL ARCHITECTURE"
             include *
-            properties {
-                "structurizr.boundaryPadding" "8"
-            }
-            autolayout tb 150 120
+            autolayout tb 220 170
         }
 
-        dynamic sunnyview "main-feature" "Trace roof -> panel layout -> estimate" {
+        container sunnyview "main-feature" {
             title "SUNNYVIEW / MAIN FEATURE: TRACE ROOF -> ESTIMATE"
-
-            1: user -> web "Trace roof; web packs panels"
-            2: web -> api "Call /api/*"
-            3: api -> geoApis "Geocode + imagery + footprints"
-            4: api -> solarWeatherApis "Estimate + forecast"
-            5: api -> segmenter "Optional CV outline"
-            6: api -> aiVoiceApis "Optional AI + TTS"
-
-            properties {
-                "structurizr.boundaryPadding" "8"
-            }
-            autolayout lr 140 90
+            include user
+            include web
+            include api
+            include segmenter
+            include geoApis
+            include solarWeatherApis
+            include aiVoiceApis
+            autolayout lr 240 180
         }
 
         styles {
@@ -176,8 +159,8 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             relationship "Relationship" {
                 thickness 5
                 color #94A3B8
-                routing Orthogonal
-                fontSize 1
+                routing Direct
+                fontSize 16
             }
 
             relationship "Optional" {
