@@ -17,7 +17,7 @@ const sunnyviewFaviconSrc = typeof sunnyviewFavicon === 'string' ? sunnyviewFavi
 const sunnyviewLogoSrc = typeof sunnyviewLogo === 'string' ? sunnyviewLogo : sunnyviewLogo.src
 
 export const metadata: Metadata = {
-  title: 'sunnyview - Solar Feasibility in 30 Seconds',
+  title: 'sunnyview',
   description: 'Trace a roof, see instant solar panel layouts with energy and CO2 estimates.',
   generator: 'sunnyview',
   icons: {

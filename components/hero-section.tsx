@@ -30,6 +30,9 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
   const [elevenLabsOnlineKey, setElevenLabsOnlineKey] = useState<string | null>(null)
   const [elevenLabsOnlineOk, setElevenLabsOnlineOk] = useState<boolean | null>(null)
   const elevenValidateAbortRef = useRef<AbortController | null>(null)
+  const [geminiEnvLoaded, setGeminiEnvLoaded] = useState<boolean | null>(null)
+  const [elevenEnvLoaded, setElevenEnvLoaded] = useState<boolean | null>(null)
+  const [elevenVoiceEnvLoaded, setElevenVoiceEnvLoaded] = useState<boolean | null>(null)
 
   useEffect(() => {
     const geminiStorageKey = "sunnyview-gemini-api-key-v1"
@@ -54,6 +57,47 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
       cancelled = true
       window.clearTimeout(t)
     }
+  }, [])
+
+  useEffect(() => {
+    const ac = new AbortController()
+
+    ;(async () => {
+      try {
+        const [geminiRes, elevenRes] = await Promise.all([
+          fetch("/api/gemini-validate", {
+            method: "POST",
+            signal: ac.signal,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({}),
+          }),
+          fetch("/api/elevenlabs-validate", {
+            method: "POST",
+            signal: ac.signal,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({}),
+          }),
+        ])
+
+        const geminiData = (await geminiRes.json().catch(() => null)) as any
+        const elevenData = (await elevenRes.json().catch(() => null)) as any
+        if (ac.signal.aborted) return
+
+        if (typeof geminiData?.envLoaded === "boolean") {
+          setGeminiEnvLoaded(geminiData.envLoaded)
+        }
+        if (typeof elevenData?.envLoaded === "boolean") {
+          setElevenEnvLoaded(elevenData.envLoaded)
+        }
+        if (typeof elevenData?.voiceEnvLoaded === "boolean") {
+          setElevenVoiceEnvLoaded(elevenData.voiceEnvLoaded)
+        }
+      } catch {
+        if (ac.signal.aborted) return
+      }
+    })()
+
+    return () => ac.abort()
   }, [])
 
   useEffect(() => {
@@ -118,6 +162,9 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         })
         const data = (await res.json().catch(() => null)) as any
         if (ac.signal.aborted) return
+        if (typeof data?.envLoaded === "boolean") {
+          setGeminiEnvLoaded(data.envLoaded)
+        }
         setGeminiOnlineKey(raw)
         setGeminiOnlineOk(data?.ok === true)
       } catch {
@@ -157,6 +204,12 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         })
         const data = (await res.json().catch(() => null)) as any
         if (ac.signal.aborted) return
+        if (typeof data?.envLoaded === "boolean") {
+          setElevenEnvLoaded(data.envLoaded)
+        }
+        if (typeof data?.voiceEnvLoaded === "boolean") {
+          setElevenVoiceEnvLoaded(data.voiceEnvLoaded)
+        }
         setElevenLabsOnlineKey(raw)
         setElevenLabsOnlineOk(data?.ok === true)
       } catch {
@@ -227,6 +280,28 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             ? "valid"
             : "invalid"
           : "checking"
+
+  const backendTarget =
+    (process.env.NEXT_PUBLIC_API_ORIGIN ?? "").trim().replace(/\/$/, "") ||
+    "same-origin /api (localhost in dev)"
+
+  const geminiEnvChipClass =
+    geminiEnvLoaded === true
+      ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+      : geminiEnvLoaded === false
+        ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
+        : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
+  const geminiEnvChipLabel =
+    geminiEnvLoaded === true ? "Env loaded" : geminiEnvLoaded === false ? "Env missing" : "Env unknown"
+
+  const elevenEnvChipClass =
+    elevenEnvLoaded === true
+      ? "rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-200"
+      : elevenEnvLoaded === false
+        ? "rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200"
+        : "rounded-md border border-border/45 bg-secondary/40 px-2 py-1 text-[10px] font-semibold text-muted-foreground"
+  const elevenEnvChipLabel =
+    elevenEnvLoaded === true ? "Env loaded" : elevenEnvLoaded === false ? "Env missing" : "Env unknown"
 
   useLayoutEffect(() => {
     if (!visible) return
@@ -406,6 +481,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             <div className="mt-0.5 text-xs text-muted-foreground">Stored locally in this browser (localStorage). Format + live check.</div>
           </div>
           <div className="flex items-center gap-2">
+            <div className={geminiEnvChipClass}>{geminiEnvChipLabel}</div>
             <div
               className={
                 geminiKeyState === "valid"
@@ -451,6 +527,9 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
                   : "border-input focus-visible:ring-primary/50")
             }
           />
+          <div className="mt-2 text-[11px] text-muted-foreground">
+            Backend target: <span className="text-foreground">{backendTarget}</span>
+          </div>
         </div>
       </div>
 
@@ -463,6 +542,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <div className={elevenEnvChipClass}>{elevenEnvChipLabel}</div>
             <div
               className={
                 elevenLabsKeyState === "valid"
@@ -518,7 +598,28 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             className="h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           />
           <div className="text-xs text-muted-foreground">
-            If `NEXT_PUBLIC_API_ORIGIN` is set, this key will not be sent. Configure ElevenLabs on that backend instead.
+            Backend target: <span className="text-foreground">{backendTarget}</span>
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            Server voice env: {" "}
+            <span
+              className={
+                elevenVoiceEnvLoaded === true
+                  ? "text-emerald-200"
+                  : elevenVoiceEnvLoaded === false
+                    ? "text-rose-200"
+                    : "text-muted-foreground"
+              }
+            >
+              {elevenVoiceEnvLoaded === true
+                ? "Loaded"
+                : elevenVoiceEnvLoaded === false
+                  ? "Missing"
+                  : "Unknown"}
+            </span>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            If `NEXT_PUBLIC_API_ORIGIN` is set, this local key will not be sent. Configure ElevenLabs on that backend instead.
           </div>
         </div>
       </div>

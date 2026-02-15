@@ -12,18 +12,20 @@ function looksLikeGeminiKey(value: string) {
 
 export async function POST(req: Request) {
   // Quick online validation (small, cheap request).
+  const envKey = process.env.GEMINI_API_KEY?.trim() || ""
+  const envLoaded = envKey.length > 0
   const headerKey = req.headers.get("x-gemini-api-key") ?? ""
   const body = await req.json().catch(() => ({}))
   const bodyKeyRaw = (body as any)?.geminiApiKey ?? (body as any)?.apiKey
   const bodyKey = typeof bodyKeyRaw === "string" ? bodyKeyRaw : ""
-  const key = headerKey || bodyKey
+  const key = (headerKey || bodyKey).trim()
 
-  if (!key.trim()) {
-    return NextResponse.json({ ok: false, error: "Missing API key" }, { status: 200 })
+  if (!key) {
+    return NextResponse.json({ ok: false, error: "Missing API key", envLoaded }, { status: 200 })
   }
 
   if (!looksLikeGeminiKey(key)) {
-    return NextResponse.json({ ok: false }, { status: 200 })
+    return NextResponse.json({ ok: false, envLoaded }, { status: 200 })
   }
 
   const ac = new AbortController()
@@ -44,18 +46,18 @@ export async function POST(req: Request) {
     })
 
     if (!res.ok) {
-      return NextResponse.json({ ok: false }, { status: 200 })
+      return NextResponse.json({ ok: false, envLoaded }, { status: 200 })
     }
 
     const json = (await res.json().catch(() => null)) as any
     const models = Array.isArray(json?.models) ? json.models : null
     if (!models) {
-      return NextResponse.json({ ok: false }, { status: 200 })
+      return NextResponse.json({ ok: false, envLoaded }, { status: 200 })
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 })
+    return NextResponse.json({ ok: true, envLoaded }, { status: 200 })
   } catch {
-    return NextResponse.json({ ok: false }, { status: 200 })
+    return NextResponse.json({ ok: false, envLoaded }, { status: 200 })
   } finally {
     clearTimeout(t)
     ac.abort()

@@ -252,7 +252,6 @@ export function SunnyviewExperience() {
   const [panelsMounted, setPanelsMounted] = useState(false);
   const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup");
   const topChromeRef = useRef<HTMLDivElement | null>(null);
-  const earthHintRef = useRef<HTMLDivElement | null>(null);
   const topIntroPlayedRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const lastHistorySigRef = useRef<string | null>(null);
@@ -315,15 +314,6 @@ export function SunnyviewExperience() {
         { y: -14, opacity: 0, scale: 0.985 },
         { y: 0, opacity: 1, scale: 1, duration: 0.46 },
         0,
-      );
-    }
-
-    if (!opened && earthHintRef.current) {
-      tl.fromTo(
-        earthHintRef.current,
-        { y: 10, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.4 },
-        0.18,
       );
     }
 
@@ -2271,12 +2261,6 @@ export function SunnyviewExperience() {
           <div className="dashboard-scrim dashboard-scrim-left absolute inset-y-0 left-0 hidden w-[34vw] lg:block" />
           <div className="dashboard-scrim dashboard-scrim-right absolute inset-y-0 right-0 hidden w-[28vw] lg:block" />
           <div className="dashboard-scrim dashboard-scrim-bottom absolute inset-x-0 bottom-0 h-[24vh] lg:hidden" />
-        </div>
-      )}
-
-      {startupDone && !opened && !settingsOpen && (
-        <div ref={earthHintRef} className="pointer-events-none absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
-          Click the Earth
         </div>
       )}
 
