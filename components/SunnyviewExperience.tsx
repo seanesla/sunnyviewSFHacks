@@ -5,7 +5,6 @@ import { ArrowLeft, History, Settings2 } from "lucide-react";
 import { gsap } from "gsap";
 import { HeroSection } from "@/components/hero-section";
 import { HistorySheet } from "@/components/history-sheet";
-import { OptionalIntegrationsSheet } from "@/components/optional-integrations-sheet";
 import { GlobeStage } from "@/components/GlobeStage";
 import { MapInput, type MapInputResult } from "@/components/MapInput";
 import { SunnyviewLogoLoader } from "@/components/SunnyviewLogoLoader";
@@ -253,13 +252,8 @@ export function SunnyviewExperience() {
   const [panelsMounted, setPanelsMounted] = useState(false);
   const [mobilePane, setMobilePane] = useState<"setup" | "results">("setup");
   const topChromeRef = useRef<HTMLDivElement | null>(null);
-  const earthHintRef = useRef<HTMLDivElement | null>(null);
   const topIntroPlayedRef = useRef(false);
-  const appPaneIntroPlayedRef = useRef(false);
-  const leftAppPaneRef = useRef<HTMLDivElement | null>(null);
-  const rightAppPaneRef = useRef<HTMLDivElement | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const lastHistorySigRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -323,70 +317,12 @@ export function SunnyviewExperience() {
       );
     }
 
-    if (!opened && earthHintRef.current) {
-      tl.fromTo(
-        earthHintRef.current,
-        { y: 10, opacity: 0 },
-        { y: 0, opacity: 1, duration: 0.4 },
-        0.18,
-      );
-    }
-
     topIntroPlayedRef.current = true;
 
     return () => {
       tl.kill();
     };
   }, [opened, settingsOpen, startupDone]);
-
-  useEffect(() => {
-    if (!opened) {
-      appPaneIntroPlayedRef.current = false;
-      return;
-    }
-    if (!panelsMounted || settingsOpen || isMobile !== false) return;
-    if (appPaneIntroPlayedRef.current) return;
-
-    const reduceMotion =
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-    if (reduceMotion) {
-      appPaneIntroPlayedRef.current = true;
-      return;
-    }
-
-    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-    const animatePaneCards = (root: HTMLDivElement | null, baseDelay: number) => {
-      if (!root) return;
-      const cards = Array.from(root.querySelectorAll<HTMLElement>("[data-app-card]"));
-      cards.forEach((card, idx) => {
-        const dir = card.dataset.appEnter;
-        const from =
-          dir === "left"
-            ? { x: -20, y: 0 }
-            : dir === "right"
-              ? { x: 20, y: 0 }
-              : dir === "down"
-                ? { x: 0, y: 20 }
-                : { x: 0, y: -20 };
-
-        tl.fromTo(
-          card,
-          { ...from, opacity: 0 },
-          { x: 0, y: 0, opacity: 1, duration: 0.45 },
-          baseDelay + idx * 0.06,
-        );
-      });
-    };
-
-    animatePaneCards(leftAppPaneRef.current, 0.06);
-    animatePaneCards(rightAppPaneRef.current, 0.16);
-
-    appPaneIntroPlayedRef.current = true;
-
-    return () => {
-      tl.kill();
-    };
-  }, [isMobile, opened, panelsMounted, settingsOpen]);
 
   function openApp() {
     if (phase !== "landing") return;
@@ -997,7 +933,7 @@ export function SunnyviewExperience() {
             typeof data?.error === "string" ? data.error : `Panel recommendation failed (${res.status})`;
           const normalized =
             message.includes("Missing GEMINI_API_KEY") || message.includes("Missing Gemini API key")
-              ? "Missing Gemini API key. Open Optional Integrations."
+              ? "Missing Gemini API key. Add it on the landing page."
               : message;
           const attempted = Array.isArray(data?.attemptedModels)
             ? data.attemptedModels.map((v: any) => String(v)).filter(Boolean)
@@ -1057,9 +993,6 @@ export function SunnyviewExperience() {
         if (ac.signal.aborted) return;
         const msg = e instanceof Error ? e.message : "Panel recommendation failed.";
         setPanelBrandError(msg);
-        if (msg.toLowerCase().includes("gemini") && msg.toLowerCase().includes("key")) {
-          setIntegrationsOpen(true);
-        }
       } finally {
         if (!ac.signal.aborted) setPanelBrandBusy(false);
       }
@@ -1381,145 +1314,30 @@ export function SunnyviewExperience() {
     caveat: string;
   } | null>(null);
   const [ttsLoading, setTtsLoading] = useState(false);
-  const [geminiKey, setGeminiKey] = useState("");
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
-  const [geminiOnlineKey, setGeminiOnlineKey] = useState<string | null>(null);
-  const [geminiOnlineOk, setGeminiOnlineOk] = useState<boolean | null>(null);
-  const [elevenLabsKey, setElevenLabsKey] = useState("");
-  const [elevenLabsVoiceId, setElevenLabsVoiceId] = useState("");
-  const [showElevenLabsKey, setShowElevenLabsKey] = useState(false);
-
-  const validateGeminiAbortRef = useRef<AbortController | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [hasLocalElevenLabsKey, setHasLocalElevenLabsKey] = useState<boolean | null>(null);
 
   useEffect(() => {
-    try {
-      const k = String(window.localStorage.getItem("sunnyview-gemini-api-key-v1") ?? "");
-      if (k) setGeminiKey(k);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      const k = "sunnyview-gemini-api-key-v1";
-      if (geminiKey.trim().length === 0) window.localStorage.removeItem(k);
-      else window.localStorage.setItem(k, geminiKey);
-    } catch {
-      // ignore
-    }
-  }, [geminiKey]);
-
-  useEffect(() => {
-    const raw = geminiKey.trim();
-    validateGeminiAbortRef.current?.abort();
-
-    if (!raw) {
-      setGeminiOnlineKey(null);
-      setGeminiOnlineOk(null);
+    if (!opened) {
+      setHasLocalElevenLabsKey(null);
       return;
     }
-    if (!/^[A-Za-z0-9._-]{20,}$/.test(raw)) return;
 
-    const ac = new AbortController();
-    validateGeminiAbortRef.current = ac;
-
-    const t = window.setTimeout(async () => {
+    const read = () => {
       try {
-        const res = await fetch("/api/gemini-validate", {
-          method: "POST",
-          signal: ac.signal,
-          headers: {
-            "content-type": "application/json",
-            "x-gemini-api-key": raw,
-          },
-          body: JSON.stringify({}),
-        });
-        const data = (await res.json().catch(() => null)) as any;
-        if (ac.signal.aborted) return;
-        setGeminiOnlineKey(raw);
-        setGeminiOnlineOk(data?.ok === true);
+        const k = String(
+          window.localStorage.getItem("sunnyview-elevenlabs-api-key-v1") ?? "",
+        ).trim();
+        setHasLocalElevenLabsKey(k.length > 0);
       } catch {
-        if (ac.signal.aborted) return;
-        setGeminiOnlineKey(raw);
-        setGeminiOnlineOk(false);
+        setHasLocalElevenLabsKey(false);
       }
-    }, 260);
-
-    return () => {
-      window.clearTimeout(t);
-      ac.abort();
     };
-  }, [geminiKey]);
 
-  const rawGeminiKey = geminiKey.trim();
-  const geminiFormatOk = rawGeminiKey.length > 0 && /^[A-Za-z0-9._-]{20,}$/.test(rawGeminiKey);
-  const geminiKeyState: "idle" | "checking" | "valid" | "invalid" =
-    rawGeminiKey.length === 0
-      ? "idle"
-      : !geminiFormatOk
-        ? "invalid"
-        : geminiOnlineKey === rawGeminiKey
-          ? geminiOnlineOk
-            ? "valid"
-            : "invalid"
-          : "checking";
-
-  useEffect(() => {
-    try {
-      const k = String(window.localStorage.getItem("sunnyview-elevenlabs-api-key-v1") ?? "");
-      const v = String(window.localStorage.getItem("sunnyview-elevenlabs-voice-id-v1") ?? "");
-      if (k) setElevenLabsKey(k);
-      if (v) setElevenLabsVoiceId(v);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      const k = "sunnyview-elevenlabs-api-key-v1";
-      if (elevenLabsKey.trim().length === 0) window.localStorage.removeItem(k);
-      else window.localStorage.setItem(k, elevenLabsKey);
-    } catch {
-      // ignore
-    }
-  }, [elevenLabsKey]);
-
-  useEffect(() => {
-    try {
-      const k = "sunnyview-elevenlabs-voice-id-v1";
-      if (elevenLabsVoiceId.trim().length === 0) window.localStorage.removeItem(k);
-      else window.localStorage.setItem(k, elevenLabsVoiceId);
-    } catch {
-      // ignore
-    }
-  }, [elevenLabsVoiceId]);
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
-
-  const integrationsBackendSameOrigin = (() => {
-    if (typeof window === "undefined") return true;
-    const origin = (() => {
-      try {
-        return window.location.origin;
-      } catch {
-        return "";
-      }
-    })();
-    const backendOrigin = apiOrigin();
-    return backendOrigin.length === 0 || backendOrigin === origin;
-  })();
-
-  const heroGeminiStatus: "off" | "checking" | "ready" | "invalid" =
-    geminiKeyState === "valid"
-      ? "ready"
-      : geminiKeyState === "checking"
-        ? "checking"
-        : geminiKeyState === "invalid"
-          ? "invalid"
-          : "off";
-  const heroVoiceStatus: "off" | "ready" =
-    elevenLabsKey.trim().length > 0 ? "ready" : "off";
+    read();
+    const t = window.setTimeout(read, 260);
+    return () => window.clearTimeout(t);
+  }, [opened]);
 
   const sceneMode = opened ? "grid" : "fusion";
 
@@ -1593,9 +1411,25 @@ export function SunnyviewExperience() {
     try {
       const headers: Record<string, string> = { "content-type": "application/json" };
 
-      const key = elevenLabsKey.trim();
+      let key = "";
+      try {
+        key = String(
+          window.localStorage.getItem("sunnyview-elevenlabs-api-key-v1") ?? "",
+        ).trim();
+      } catch {
+        key = "";
+      }
+      setHasLocalElevenLabsKey(key.length > 0);
 
-      const sameOrigin = integrationsBackendSameOrigin;
+      const origin = (() => {
+        try {
+          return window.location.origin;
+        } catch {
+          return "";
+        }
+      })();
+      const backendOrigin = apiOrigin();
+      const sameOrigin = backendOrigin.length === 0 || backendOrigin === origin;
 
       if (key && sameOrigin) {
         headers["x-elevenlabs-api-key"] = key;
@@ -1603,10 +1437,16 @@ export function SunnyviewExperience() {
         setActionNotice(
           "ElevenLabs key is stored locally, but this app is configured to use an external backend (NEXT_PUBLIC_API_ORIGIN). For safety, the key is not sent. Set ELEVENLABS_API_KEY on the backend instead."
         );
-        setIntegrationsOpen(true);
       }
 
-      const voiceId = elevenLabsVoiceId.trim();
+      let voiceId = "";
+      try {
+        voiceId = String(
+          window.localStorage.getItem("sunnyview-elevenlabs-voice-id-v1") ?? "",
+        ).trim();
+      } catch {
+        voiceId = "";
+      }
 
       const res = await fetch(apiUrl("/api/tts"), {
         method: "POST",
@@ -1629,9 +1469,6 @@ export function SunnyviewExperience() {
             ? data.note
             : "Text-to-speech is not available right now.";
         setActionNotice(note);
-        if (note.toLowerCase().includes("api key") || note.toLowerCase().includes("elevenlabs")) {
-          setIntegrationsOpen(true);
-        }
         return;
       }
       const audio = new Audio(audioUrl);
@@ -1642,9 +1479,6 @@ export function SunnyviewExperience() {
           ? e.message
           : "Text-to-speech is not available right now.";
       setActionNotice(message);
-      if (message.toLowerCase().includes("elevenlabs")) {
-        setIntegrationsOpen(true);
-      }
     } finally {
       setTtsLoading(false);
     }
@@ -1841,9 +1675,9 @@ export function SunnyviewExperience() {
           (source === "fallback_rect" || source.includes("fallback_rect") || source.includes("segmenter_error"));
         const lowConfidence = confidence !== null && confidence < 0.32;
         if ((fallbackish || lowConfidence) && !hint) {
-          hint = "Edit -> ROI -> Auto-line.";
+          hint = "Edit -> Auto-outline.";
         } else if (!hint && looksLikeFootprint) {
-          hint = "OSM outline. Edit -> ROI -> Auto-line.";
+          hint = "OSM outline. Edit -> Auto-outline.";
         }
         if (hint) setAutoOutlineHint(hint);
       } catch (e) {
@@ -1956,7 +1790,7 @@ export function SunnyviewExperience() {
 
   const leftPanel = (
     <div className="space-y-3">
-      <div data-app-card data-app-enter="down" className="flex items-center justify-between">
+      <div className="flex items-center justify-between">
         <div className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">
           Site
         </div>
@@ -1969,11 +1803,9 @@ export function SunnyviewExperience() {
         </button>
       </div>
 
-      <div data-app-card data-app-enter="left">
-        <MapInput value={mapInput} onChange={setMapInput} compact={isMobile === false} />
-      </div>
+      <MapInput value={mapInput} onChange={setMapInput} compact={isMobile === false} />
 
-      <div data-app-card data-app-enter="up" className="glass-card p-3">
+      <div className="glass-card p-3">
         <div className="text-sm font-semibold text-foreground">
           Site + assumptions
         </div>
@@ -2030,72 +1862,87 @@ export function SunnyviewExperience() {
         </div>
       </div>
 
-      <div data-app-card data-app-enter="up">
-        <RoofCanvas
-          key={
-            background.kind === "image"
-              ? `img:${background.src}:${background.widthPx}x${background.heightPx}`
-              : background.kind
-          }
-          containerClassName="h-[250px] sm:h-[300px] lg:h-[min(30vh,320px)] xl:h-[min(34vh,360px)]"
-          background={background}
-          mPerPx={mPerPx}
-          orientationDeg={orientationDeg}
-          panelSpec={panelSpec}
-          vertices={vertices}
-          closed={closed}
-          panels={panels}
-          onVerticesChange={(v) => {
-            setVertices(v);
-            setPanelCountOverride(null);
-            setPanelsPacked([]);
+      <RoofCanvas
+        key={
+          background.kind === "image"
+            ? `img:${background.src}:${background.widthPx}x${background.heightPx}`
+            : background.kind
+        }
+        containerClassName="h-[250px] sm:h-[300px] lg:h-[min(30vh,320px)] xl:h-[min(34vh,360px)]"
+        background={background}
+        mPerPx={mPerPx}
+        orientationDeg={orientationDeg}
+        panelSpec={panelSpec}
+        vertices={vertices}
+        closed={closed}
+        panels={panels}
+        onVerticesChange={(v) => {
+          setVertices(v);
+          setPanelCountOverride(null);
+          setPanelsPacked([]);
+          setRoofAxisHintDeg(null);
+          setPanelAutoReadyKey(null);
+          lastPanelAutoKeyRef.current = null;
+          setCandidatePolygons(null);
+          setAutoOutlineError(null);
+          setAutoOutlineHint(null);
+          if (v.length < 3) setClosed(false);
+          if (v.length === 0) {
+            setCandidatePolygons(null);
+            setAutoOutlineHint(null);
+            setAutoOutlineError(null);
             setRoofAxisHintDeg(null);
             setPanelAutoReadyKey(null);
             lastPanelAutoKeyRef.current = null;
-            setCandidatePolygons(null);
-            setAutoOutlineError(null);
-            setAutoOutlineHint(null);
-            if (v.length < 3) setClosed(false);
-            if (v.length === 0) {
-              setCandidatePolygons(null);
-              setAutoOutlineHint(null);
-              setAutoOutlineError(null);
-              setRoofAxisHintDeg(null);
-              setPanelAutoReadyKey(null);
-              lastPanelAutoKeyRef.current = null;
-            }
-          }}
-          onClosedChange={setClosed}
-          onAutoOutline={(o) => runAutoOutline({ reason: "manual", roi: o?.roi ?? null })}
-          autoOutlineBusy={autoOutlineBusy}
-          autoOutlineError={autoOutlineError}
-          autoOutlineHint={autoOutlineHint}
-          candidatePolygons={candidatePolygons}
-          onPickCandidate={pickCandidate}
-          centerPin={
-            addressStatic
-              ? { x: addressStatic.widthPx / 2, y: addressStatic.heightPx / 2 }
-              : null
           }
-        />
+        }}
+        onClosedChange={setClosed}
+        onAutoOutline={(o?: { roi?: { x: number; y: number; w: number; h: number } | null }) => {
+          void runAutoOutline({ reason: "manual", roi: o?.roi ?? null });
+        }}
+        autoOutlineBusy={autoOutlineBusy}
+        autoOutlineError={autoOutlineError}
+        autoOutlineHint={autoOutlineHint}
+        candidatePolygons={candidatePolygons}
+        onPickCandidate={pickCandidate}
+        centerPin={
+          addressStatic
+            ? { x: addressStatic.widthPx / 2, y: addressStatic.heightPx / 2 }
+            : null
+        }
+      />
+
+      <div className="glass-card p-3">
+        <div className="text-sm font-semibold text-foreground">Orientation</div>
+        <label className="mt-3 block space-y-1">
+          <div className="text-xs text-muted-foreground">Orientation (deg)</div>
+          <input
+            type="range"
+            min={-90}
+            max={90}
+            step={1}
+            value={orientationDeg}
+            onChange={(e) => setOrientationDeg(Number(e.target.value))}
+            className="w-full"
+          />
+          <div className="text-xs text-muted-foreground">{orientationDeg}°</div>
+        </label>
       </div>
     </div>
   );
 
   const rightPanel = (
     <div className="space-y-3">
-      <div data-app-card data-app-enter="right">
-        <SolarForecastCard
-          className="glass-card p-3"
-          lat={lat}
-          lng={lng}
-          dcKw={dcKw}
-          lossesPct={lossesPct}
-          panelCount={panelCount}
-        />
-      </div>
+      <SolarForecastCard
+        className="glass-card p-3"
+        lat={lat}
+        lng={lng}
+        dcKw={dcKw}
+        lossesPct={lossesPct}
+        panelCount={panelCount}
+      />
 
-      <div data-app-card data-app-enter="down" className="glass-card p-3">
+      <div className="glass-card p-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-foreground">Results</div>
           <div className="text-xs text-muted-foreground">
@@ -2134,7 +1981,7 @@ export function SunnyviewExperience() {
             <div>
               <div className="text-xs font-semibold text-foreground">Panel model</div>
               <div className="mt-1 text-[11px] text-muted-foreground">
-                {panelChoiceLabel} • {panelSpecMode === "auto" ? "auto" : "manual"} • {panelSpec.widthM.toFixed(2)}m × {panelSpec.heightM.toFixed(2)}m • {Math.round(panelSpec.wattW)}W
+                {panelChoiceLabel} • {panelSpecMode === "auto" ? "auto" : "locked"}
               </div>
             </div>
             <div className="flex gap-2">
@@ -2147,9 +1994,9 @@ export function SunnyviewExperience() {
                   setPanelBrandError(null)
                   lastPanelAutoKeyRef.current = null
                 }}
-                title={panelSpecMode === "auto" ? "Switch to manual panel sizing" : "Switch back to auto"}
+                title={panelSpecMode === "auto" ? "Lock panel model selection" : "Switch back to auto selection"}
               >
-                {panelSpecMode === "auto" ? "Manual" : "Auto"}
+                {panelSpecMode === "auto" ? "Lock" : "Auto"}
               </button>
               <button
                 type="button"
@@ -2237,13 +2084,15 @@ export function SunnyviewExperience() {
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIntegrationsOpen(true)}
-          className="mt-2 text-xs text-muted-foreground underline underline-offset-2 transition hover:text-foreground hover:no-underline"
-        >
-          Add API keys (Gemini / ElevenLabs)
-        </button>
+        {!hasBackend && hasLocalElevenLabsKey === false && (
+          <button
+            type="button"
+            onClick={returnToLanding}
+            className="mt-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground hover:no-underline"
+          >
+            Add ElevenLabs key on landing to enable Talk
+          </button>
+        )}
 
         {(actionNotice || shareDisabledReason) && (
           <div className="mt-2 text-xs text-muted-foreground">
@@ -2265,7 +2114,7 @@ export function SunnyviewExperience() {
         )}
       </div>
 
-      <div data-app-card data-app-enter="right" className="glass-card p-3">
+      <div className="glass-card p-3">
         <div className="text-sm font-semibold text-foreground">
           Panel packing
         </div>
@@ -2308,90 +2157,6 @@ export function SunnyviewExperience() {
               Auto fits {panelCountAuto}. Manual resets when you edit the roof or search a new address.
             </div>
           </div>
-
-          <label className="space-y-1">
-            <div className="text-xs text-muted-foreground">
-              Orientation (deg)
-            </div>
-            <input
-              type="range"
-              min={-90}
-              max={90}
-              step={1}
-              value={orientationDeg}
-              onChange={(e) => setOrientationDeg(Number(e.target.value))}
-              className="w-full"
-            />
-            <div className="text-xs text-muted-foreground">
-              {orientationDeg}°
-            </div>
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Panel W (m)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.widthM}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    widthM: Number(e.target.value) || p.widthM,
-                  }))
-                }}
-                inputMode="decimal"
-              />
-            </label>
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Panel H (m)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.heightM}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    heightM: Number(e.target.value) || p.heightM,
-                  }))
-                }}
-                inputMode="decimal"
-              />
-            </label>
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Watt (W)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.wattW}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    wattW: Number(e.target.value) || p.wattW,
-                  }))
-                }}
-                inputMode="numeric"
-              />
-            </label>
-            <label className="space-y-1">
-              <div className="text-xs text-muted-foreground">Gap (m)</div>
-              <input
-                className="h-9 w-full rounded-md border border-input bg-background/60 px-3 text-sm"
-                value={panelSpec.gapM}
-                onChange={(e) => {
-                  setPanelSpecMode("manual")
-                  setPanelChoiceId("custom")
-                  setPanelSpec((p) => ({
-                    ...p,
-                    gapM: Number(e.target.value) || p.gapM,
-                  }))
-                }}
-                inputMode="decimal"
-              />
-            </label>
-          </div>
         </div>
       </div>
     </div>
@@ -2432,12 +2197,6 @@ export function SunnyviewExperience() {
         </div>
       )}
 
-      {startupDone && !opened && !settingsOpen && (
-        <div ref={earthHintRef} className="pointer-events-none absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-border/60 bg-background/50 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur-sm">
-          Click the Earth
-        </div>
-      )}
-
       {startupDone && !settingsOpen && (
         <div ref={topChromeRef} className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3 sm:top-4">
           <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border/55 bg-background/25 p-1.5 shadow-[0_12px_28px_-20px_rgba(0,0,0,0.95)] backdrop-blur-md">
@@ -2462,7 +2221,6 @@ export function SunnyviewExperience() {
               type="button"
               onClick={() => {
                 setShowShare(false);
-                setIntegrationsOpen(false);
                 setHistoryOpen(true);
               }}
               className={cn(
@@ -2481,7 +2239,6 @@ export function SunnyviewExperience() {
               onClick={() => {
                 setShowShare(false);
                 setHistoryOpen(false);
-                setIntegrationsOpen(false);
                 setSettingsOpen(true);
               }}
               className="inline-flex items-center gap-2 rounded-full border border-primary/65 bg-primary/18 px-4 py-1.5 text-xs font-semibold text-foreground shadow-[0_12px_28px_-16px_rgba(0,0,0,0.95)] backdrop-blur-sm transition hover:bg-primary/28"
@@ -2516,21 +2273,12 @@ export function SunnyviewExperience() {
                   >
                     <HeroSection
                       onStart={openApp}
-                      onOpenIntegrations={() => {
-                        setShowShare(false);
-                        setHistoryOpen(false);
-                        setSettingsOpen(false);
-                        setIntegrationsOpen(true);
-                      }}
                       visible={entered && !opened}
-                      geminiStatus={heroGeminiStatus}
-                      voiceStatus={heroVoiceStatus}
                     />
                   </div>
                 </div>
 
                 <div
-                  ref={leftAppPaneRef}
                   className={cn(
                     "absolute inset-0 h-full min-h-0 overflow-x-hidden overflow-y-auto pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
                     "transition-[opacity,transform] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
@@ -2549,9 +2297,8 @@ export function SunnyviewExperience() {
 
               {opened ? (
                 <aside className="pointer-events-auto min-h-0 transition-[opacity,transform] duration-[800ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0">
-                  <div className="h-full min-h-0 overflow-x-hidden overflow-y-auto pl-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  <div className="h-full min-h-0 overflow-x-hidden overflow-y-auto pl-1">
                     <div
-                      ref={rightAppPaneRef}
                       className={cn(
                         "transition-[opacity,transform] duration-[900ms] ease-[cubic-bezier(0.2,0.85,0.2,1)] motion-reduce:duration-0",
                         opening
@@ -2573,18 +2320,7 @@ export function SunnyviewExperience() {
                   opened ? "pointer-events-none opacity-0" : "opacity-100",
                 )}
               >
-                <HeroSection
-                  onStart={openApp}
-                  onOpenIntegrations={() => {
-                    setShowShare(false);
-                    setHistoryOpen(false);
-                    setSettingsOpen(false);
-                    setIntegrationsOpen(true);
-                  }}
-                  visible={entered && !opened}
-                  geminiStatus={heroGeminiStatus}
-                  voiceStatus={heroVoiceStatus}
-                />
+                <HeroSection onStart={openApp} visible={entered && !opened} />
               </div>
 
               {opened ? (
@@ -2647,23 +2383,6 @@ export function SunnyviewExperience() {
         onOpenChange={setHistoryOpen}
         onLoadSnapshot={loadHistorySnapshot}
         onNotice={setActionNotice}
-      />
-
-      <OptionalIntegrationsSheet
-        open={integrationsOpen}
-        onOpenChange={setIntegrationsOpen}
-        geminiKey={geminiKey}
-        onGeminiKeyChange={setGeminiKey}
-        showGeminiKey={showGeminiKey}
-        onToggleShowGeminiKey={() => setShowGeminiKey((v) => !v)}
-        geminiState={geminiKeyState}
-        elevenLabsKey={elevenLabsKey}
-        onElevenLabsKeyChange={setElevenLabsKey}
-        elevenLabsVoiceId={elevenLabsVoiceId}
-        onElevenLabsVoiceIdChange={setElevenLabsVoiceId}
-        showElevenLabsKey={showElevenLabsKey}
-        onToggleShowElevenLabsKey={() => setShowElevenLabsKey((v) => !v)}
-        backendSameOrigin={integrationsBackendSameOrigin}
       />
 
       {settingsOpen && (
