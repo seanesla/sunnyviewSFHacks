@@ -91,10 +91,15 @@ export function GlobeView({
   const landingSpinLastNowRef = useRef<number | null>(null)
   const orbitBillboardCollectionRef = useRef<import("cesium").BillboardCollection | null>(null)
   const orbitHeadBillboardRef = useRef<import("cesium").Billboard | null>(null)
+  const orbitSecondaryHeadBillboardRef = useRef<import("cesium").Billboard | null>(null)
   const orbitTrailCoreEntityRef = useRef<import("cesium").Entity | null>(null)
+  const orbitSecondaryTrailCoreEntityRef = useRef<import("cesium").Entity | null>(null)
   const orbitTrailGlowEntityRef = useRef<import("cesium").Entity | null>(null)
+  const orbitSecondaryTrailGlowEntityRef = useRef<import("cesium").Entity | null>(null)
   const orbitTrailGlowMaterialRef = useRef<import("cesium").PolylineGlowMaterialProperty | null>(null)
+  const orbitSecondaryTrailGlowMaterialRef = useRef<import("cesium").PolylineGlowMaterialProperty | null>(null)
   const orbitTrailPositionsRef = useRef<import("cesium").Cartesian3[]>([])
+  const orbitSecondaryTrailPositionsRef = useRef<import("cesium").Cartesian3[]>([])
   const orbitRafRef = useRef<number | null>(null)
   const orbitLastNowRef = useRef<number | null>(null)
   const [ready, setReady] = useState(false)
@@ -118,12 +123,20 @@ export function GlobeView({
     const billboardCollection = orbitBillboardCollectionRef.current
     orbitBillboardCollectionRef.current = null
     orbitHeadBillboardRef.current = null
+    orbitSecondaryHeadBillboardRef.current = null
 
     const trailCoreEntity = orbitTrailCoreEntityRef.current
     orbitTrailCoreEntityRef.current = null
+    const secondaryTrailCoreEntity = orbitSecondaryTrailCoreEntityRef.current
+    orbitSecondaryTrailCoreEntityRef.current = null
     const trailGlowEntity = orbitTrailGlowEntityRef.current
     orbitTrailGlowEntityRef.current = null
+    const secondaryTrailGlowEntity = orbitSecondaryTrailGlowEntityRef.current
+    orbitSecondaryTrailGlowEntityRef.current = null
     orbitTrailGlowMaterialRef.current = null
+    orbitSecondaryTrailGlowMaterialRef.current = null
+    orbitTrailPositionsRef.current = []
+    orbitSecondaryTrailPositionsRef.current = []
 
     const viewer = viewerArg ?? viewerRef.current
     if (!viewer) return
@@ -144,9 +157,25 @@ export function GlobeView({
       }
     }
 
+    if (secondaryTrailCoreEntity) {
+      try {
+        viewer.entities.remove(secondaryTrailCoreEntity)
+      } catch {
+        // ignore
+      }
+    }
+
     if (trailGlowEntity) {
       try {
         viewer.entities.remove(trailGlowEntity)
+      } catch {
+        // ignore
+      }
+    }
+
+    if (secondaryTrailGlowEntity) {
+      try {
+        viewer.entities.remove(secondaryTrailGlowEntity)
       } catch {
         // ignore
       }
@@ -527,10 +556,10 @@ export function GlobeView({
       // ignore
     }
 
-    if (reduceMotion || isHero) return
+    if (reduceMotion) return
 
-    const speedRadPerSec = 0.03
-    const delayMs = 1050
+    const speedRadPerSec = isHero ? 0.011 : 0.03
+    const delayMs = isHero ? 300 : 1050
 
     const tick = (now: number) => {
       const viewerNow = viewerRef.current
@@ -603,10 +632,12 @@ export function GlobeView({
 
       const ellipsoid = liveViewer.scene.globe.ellipsoid
       const orbitRadius = ellipsoid.maximumRadius * 1.06
+      const orbitSecondaryRadius = ellipsoid.maximumRadius * 1.115
       const orbitPlaneTiltRad = Cesium.Math.toRadians(82)
       const orbitPlanePrecessionRadPerSec = Cesium.Math.toRadians(28)
       const trailPointCount = 36
       const speedRadPerSec = Cesium.Math.toRadians(96)
+      const secondaryPhaseOffsetRad = Cesium.Math.PI
       const frameIntervalMs = 1000 / 26
 
       const orbitNormalScratch = new Cesium.Cartesian3()
@@ -722,16 +753,16 @@ export function GlobeView({
         }
       }
 
-      const orbitPoint = (a: number) => {
+      const orbitPoint = (a: number, radius: number) => {
         const cosA = Math.cos(a)
         const sinA = Math.sin(a)
         return new Cesium.Cartesian3(
-          orbitBasisUScratch.x * cosA * orbitRadius +
-            orbitBasisVScratch.x * sinA * orbitRadius,
-          orbitBasisUScratch.y * cosA * orbitRadius +
-            orbitBasisVScratch.y * sinA * orbitRadius,
-          orbitBasisUScratch.z * cosA * orbitRadius +
-            orbitBasisVScratch.z * sinA * orbitRadius
+          orbitBasisUScratch.x * cosA * radius +
+            orbitBasisVScratch.x * sinA * radius,
+          orbitBasisUScratch.y * cosA * radius +
+            orbitBasisVScratch.y * sinA * radius,
+          orbitBasisUScratch.z * cosA * radius +
+            orbitBasisVScratch.z * sinA * radius
         )
       }
 
@@ -740,14 +771,37 @@ export function GlobeView({
         return
       }
 
-      const initialHeadPosition = orbitPoint(angle)
+      const initialHeadPosition = orbitPoint(angle, orbitRadius)
       if (!isFiniteCartesian3(initialHeadPosition)) {
         clearLandingOrbit(liveViewer)
         return
       }
+      const initialSecondaryHeadPosition = orbitPoint(
+        (angle + secondaryPhaseOffsetRad) % Cesium.Math.TWO_PI,
+        orbitSecondaryRadius
+      )
+      if (!isFiniteCartesian3(initialSecondaryHeadPosition)) {
+        clearLandingOrbit(liveViewer)
+        return
+      }
       orbitTrailPositionsRef.current = [initialHeadPosition, initialHeadPosition]
+      orbitSecondaryTrailPositionsRef.current = [initialSecondaryHeadPosition, initialSecondaryHeadPosition]
+
+      orbitHead.position = initialHeadPosition
+
+      const orbitSecondaryHead = billboards.add({
+        image: sprite,
+        color: headColor.withAlpha(0.9),
+        scale: 0.72,
+      })
+      orbitSecondaryHead.position = initialSecondaryHeadPosition
+      orbitSecondaryHeadBillboardRef.current = orbitSecondaryHead
 
       const trailPositionsProperty = new Cesium.CallbackProperty(() => orbitTrailPositionsRef.current, false)
+      const secondaryTrailPositionsProperty = new Cesium.CallbackProperty(
+        () => orbitSecondaryTrailPositionsRef.current,
+        false
+      )
 
       const trailGlowMaterial = new Cesium.PolylineGlowMaterialProperty({
         color: trailGlowColor,
@@ -755,6 +809,12 @@ export function GlobeView({
         taperPower: 0.78,
       })
       orbitTrailGlowMaterialRef.current = trailGlowMaterial
+      const secondaryTrailGlowMaterial = new Cesium.PolylineGlowMaterialProperty({
+        color: trailGlowColor.withAlpha(0.11),
+        glowPower: 0.2,
+        taperPower: 0.72,
+      })
+      orbitSecondaryTrailGlowMaterialRef.current = secondaryTrailGlowMaterial
 
       orbitTrailGlowEntityRef.current = liveViewer.entities.add({
         polyline: {
@@ -772,10 +832,27 @@ export function GlobeView({
         },
       })
 
+      orbitSecondaryTrailGlowEntityRef.current = liveViewer.entities.add({
+        polyline: {
+          positions: secondaryTrailPositionsProperty,
+          width: 11,
+          material: secondaryTrailGlowMaterial,
+        },
+      })
+
+      orbitSecondaryTrailCoreEntityRef.current = liveViewer.entities.add({
+        polyline: {
+          positions: secondaryTrailPositionsProperty,
+          width: 3,
+          material: trailCoreColor.withAlpha(0.38),
+        },
+      })
+
       const drawFrame = (now: number, advance: boolean) => {
         const viewerNow = viewerRef.current
         const headNow = orbitHeadBillboardRef.current
-        if (!viewerNow || !headNow) return false
+        const secondaryHeadNow = orbitSecondaryHeadBillboardRef.current
+        if (!viewerNow || !headNow || !secondaryHeadNow) return false
 
         const lastNow = orbitLastNowRef.current ?? now
         const dt = Math.min(0.05, (now - lastNow) / 1000)
@@ -788,11 +865,17 @@ export function GlobeView({
 
         if (!computeOrbitBasis(planePrecessionAngle)) return false
 
-        const headPosition = orbitPoint(angle)
-        if (!isFiniteCartesian3(headPosition)) return false
+        const headPosition = orbitPoint(angle, orbitRadius)
+        const secondaryHeadPosition = orbitPoint(
+          (angle + secondaryPhaseOffsetRad) % Cesium.Math.TWO_PI,
+          orbitSecondaryRadius
+        )
+        if (!isFiniteCartesian3(headPosition) || !isFiniteCartesian3(secondaryHeadPosition)) return false
 
         headNow.position = headPosition
+        secondaryHeadNow.position = secondaryHeadPosition
         headNow.scale = 0.76 + Math.sin(now * 0.0044) * 0.08
+        secondaryHeadNow.scale = 0.68 + Math.sin(now * 0.0038 + 1.4) * 0.06
 
         const prevTrail = orbitTrailPositionsRef.current
         const nextTrail: import("cesium").Cartesian3[] = [headPosition]
@@ -806,6 +889,19 @@ export function GlobeView({
           nextTrail.push(headPosition)
         }
         orbitTrailPositionsRef.current = nextTrail
+
+        const prevSecondaryTrail = orbitSecondaryTrailPositionsRef.current
+        const nextSecondaryTrail: import("cesium").Cartesian3[] = [secondaryHeadPosition]
+        const secondaryCarryCount = Math.min(trailPointCount - 1, prevSecondaryTrail.length)
+        for (let i = 0; i < secondaryCarryCount; i += 1) {
+          const point = prevSecondaryTrail[i]
+          if (!isFiniteCartesian3(point)) return false
+          nextSecondaryTrail.push(point)
+        }
+        if (nextSecondaryTrail.length < 2) {
+          nextSecondaryTrail.push(secondaryHeadPosition)
+        }
+        orbitSecondaryTrailPositionsRef.current = nextSecondaryTrail
 
         viewerNow.scene.requestRender()
         return true
@@ -854,10 +950,25 @@ export function GlobeView({
     if (!Cesium) return
 
     const orbitHead = orbitHeadBillboardRef.current
+    const orbitSecondaryHead = orbitSecondaryHeadBillboardRef.current
     const trailCoreEntity = orbitTrailCoreEntityRef.current
+    const secondaryTrailCoreEntity = orbitSecondaryTrailCoreEntityRef.current
     const trailGlowMaterial = orbitTrailGlowMaterialRef.current
+    const secondaryTrailGlowMaterial = orbitSecondaryTrailGlowMaterialRef.current
     const trailGlowEntity = orbitTrailGlowEntityRef.current
-    if (!orbitHead && !trailCoreEntity && !trailGlowMaterial && !trailGlowEntity) return
+    const secondaryTrailGlowEntity = orbitSecondaryTrailGlowEntityRef.current
+    if (
+      !orbitHead &&
+      !orbitSecondaryHead &&
+      !trailCoreEntity &&
+      !secondaryTrailCoreEntity &&
+      !trailGlowMaterial &&
+      !secondaryTrailGlowMaterial &&
+      !trailGlowEntity &&
+      !secondaryTrailGlowEntity
+    ) {
+      return
+    }
 
     const { headColor, trailCoreColor, trailGlowColor } = orbitAccentColors(Cesium, hue, saturation)
 
@@ -865,9 +976,18 @@ export function GlobeView({
       orbitHead.color = headColor
     }
 
+    if (orbitSecondaryHead) {
+      orbitSecondaryHead.color = headColor.withAlpha(0.9)
+    }
+
     const corePolyline = trailCoreEntity?.polyline
     if (corePolyline) {
       ;(corePolyline as any).material = trailCoreColor
+    }
+
+    const secondaryCorePolyline = secondaryTrailCoreEntity?.polyline
+    if (secondaryCorePolyline) {
+      ;(secondaryCorePolyline as any).material = trailCoreColor.withAlpha(0.38)
     }
 
     if (trailGlowMaterial) {
@@ -877,6 +997,17 @@ export function GlobeView({
         color: trailGlowColor,
         glowPower: 0.22,
         taperPower: 0.78,
+      })
+    }
+
+    const secondaryTrailGlowColor = trailGlowColor.withAlpha(0.11)
+    if (secondaryTrailGlowMaterial) {
+      ;(secondaryTrailGlowMaterial as any).color = secondaryTrailGlowColor
+    } else if (secondaryTrailGlowEntity?.polyline) {
+      ;(secondaryTrailGlowEntity.polyline as any).material = new Cesium.PolylineGlowMaterialProperty({
+        color: secondaryTrailGlowColor,
+        glowPower: 0.2,
+        taperPower: 0.72,
       })
     }
 
