@@ -1,140 +1,156 @@
-# AGENTS Instructions
+# AGENTS.md
 
-These instructions apply to all work in this repository. Use them as the first source of guidance, then align with file-local conventions when they do not conflict.
+Guidelines for agentic coding tools working in this repository.
+Use this file by default unless a higher-priority local rule file exists.
 
-## Scope and priority
+## Scope and Rule Priority
 
-- Scope: entire repo at `.` (Sunnyview root).
-- This file is top-level guidance for code generation, review, and refactoring.
-- If later a local rule file appears (`.cursor/rules`, `.cursorrules`, `.github/copilot-instructions.md`), that file must be checked first and supersedes these instructions where conflicting.
-- Do not run destructive git commands unless explicitly requested.
+- Scope: everything under repository root (`.`).
+- Priority order:
+  1) direct user instruction
+  2) local rule files (`.cursor/rules/`, `.cursorrules`, `.github/copilot-instructions.md`)
+  3) this `AGENTS.md`
+  4) existing file-level conventions
+- Never run destructive git commands unless explicitly requested.
 
-## Current repo status
+## Local Rule Files (checked)
 
-- No `AGENTS.md` existed before this file.
-- No `.cursor/rules`, `.cursorrules`, or `.github/copilot-instructions.md` files are present at this time.
-- There is no formal unit/e2e test script currently defined in `package.json`.
-- Implemented local route handlers in this repo: `/api/geocode`, `/api/static-map`.
-- Not implemented in this repo yet: `/api/projects`, `/api/estimate`, `/api/segment`, `/api/explain`, `/api/tts`.
-- make sure you label those missing backend routes as external dependencies in docs and PR notes.
+As of 2026-02-14, these are **not present**:
 
-## Build and verification commands
+- `.cursor/rules/`
+- `.cursorrules`
+- `.github/copilot-instructions.md`
 
-- `npm install` / `pnpm install`
-  - Install dependencies.
-- `npm run dev`
-  - Run development server. Uses webpack mode for Cesium (`--webpack`).
-- `npm run build`
-  - Build production bundle (`next build --webpack`).
-- `npm run start`
-  - Start production server from `.next` output.
-- `npm run lint`
-  - Run ESLint across project files.
-- `npx tsc --noEmit`
-  - Optional explicit TypeScript check matching current `tsconfig` settings.
-- Single-file verification command (test-like target)
-  - `npx eslint components/PanelPacking.ts`
-  - Use this when making focused algorithm or helper changes to validate one file quickly.
+If they appear later, they override this file where conflicting.
 
-If lint/build fails, fix before committing.
+## Repository Snapshot
 
-## No formal tests yet
+- Stack: Next.js 16 (App Router), TypeScript, React 19.
+- Lint: ESLint with `eslint-config-next`.
+- Unit tests: Vitest (`vitest.config.ts`, `lib/**/*.test.ts`).
+- Optional Python service: `services/segmenter/`.
+- Import alias: `@/*` maps to project root.
 
-- There is no `npm test`, `vitest`, `jest`, `playwright`, or `cypress` setup configured right now.
-- Treat `npm run lint` and `npx tsc --noEmit` as the minimum quality gate for now.
-- For risky work, run the single-file command first, then full lint/build.
+### Implemented local Next.js API routes
 
-## Project architecture overview
+- `GET /api/geocode`
+- `GET /api/static-map`
+- `GET /api/reverse-geocode`
+- `POST /api/estimate`
+- `POST /api/segment`
+- `POST /api/explain`
+- `POST /api/tts`
+- `GET /api/forecast`
+- `POST /api/panel-recommend`
+- `POST /api/gemini-validate`
 
-- App Router is used (`app/`).
-- Main user flow is orchestrated by `components/SunnyviewExperience.tsx` with three main phases: `landing`, `opening`, and `app`.
-- Main visual components:
-  - `components/GlobeView.tsx`
-  - `components/MapInput.tsx`
-  - `components/RoofCanvas.tsx`
-- Algorithm files:
-  - `components/PanelPacking.ts`
-- UI panels and metrics:
-  - `components/dashboard.tsx`
-  - `components/metrics-panel.tsx`
-  - `components/hero-section.tsx`
-- Shared utility and API modules:
-  - `lib/api.ts`
-  - `lib/utils.ts`
-  - `hooks/use-toast.ts`, `hooks/use-mobile.ts`
+### External backend dependencies (still missing here)
 
-## TypeScript and code style
+Always label these as external dependencies in docs/PR notes:
 
-- Use TypeScript in new/modified code unless there is a strong reason not to.
-- Respect `strict: true` typing in `tsconfig.json`.
-- Prefer explicit type annotations on exported function parameters and return values.
-- Avoid `any`. If unavoidable, add a brief comment explaining why.
-- Use discriminated unions or string literal unions for known finite states.
-- Keep domain terms consistent (`polygon`, `panel`, `estimate`, `project`, `roof` terminology).
+- `POST /api/projects`
+- `GET /api/projects/:id`
+- `PATCH /api/projects/:id`
+- `GET /s/:shareSlug` JSON endpoint
 
-## Imports and formatting
+## Build, Lint, and Test Commands (root)
 
-- Prefer path alias imports from `@/*` for local files.
-- Suggested order:
-  1. React/Next imports
-  2. Third-party libs
-  3. Internal modules (`@/`)
-  4. Types/constants/config
-- Keep files small and focused; extract helper functions when component logic gets long.
-- Avoid duplicated utility logic across files; centralize in `lib/` where reusable.
-- One consistent quote style per file is acceptable; keep it coherent.
+- Install deps: `npm install` (or `pnpm install`)
+- Start dev: `npm run dev`
+- Build prod: `npm run build`
+- Start prod server: `npm run start`
+- Lint all: `npm run lint`
+- Type check: `npx tsc --noEmit`
+- Run all unit tests: `npm test`
+- Test watch mode: `npm run test:watch`
 
-## React and client/server boundaries
+### Single-test commands (important)
 
-- If a component uses browser APIs, hooks, event handlers, state, or refs, add `"use client"`.
-- Keep server-only logic (fetching env variables, route-level logic) in server components or API routes.
-- Keep rendering pure where possible; move heavy calculations into utility functions.
-- Do not mix unrelated state changes in one `setState` call block if sequential consistency matters.
+- Single Vitest file: `npx vitest run lib/roof-plane.test.ts`
+- Single test name: `npx vitest run lib/roof-plane.test.ts -t "splits a footprint into two planes and reduces packing count"`
+- Quick file lint: `npx eslint components/PanelPacking.ts`
 
-## Error handling
+For `services/segmenter/*` changes (Python), use:
+- `python -m unittest discover -s services/segmenter/tests`
+- `python -m unittest services.segmenter.tests.test_postprocess.TestPostprocess.test_ring_to_mask`
 
-- Use `try/catch` around async operations.
-- Convert recoverable errors to user-visible UI state instead of silent failures.
-- For background/calculation failures, show clear fallback values, especially in estimate panels.
-- Avoid throwing generic strings; throw typed `Error` objects with actionable messages.
+## Code Style Guidelines
 
-## Geometry and simulation edits
+### TypeScript and Types
 
-- Preserve coordinate-space correctness when editing map and canvas logic.
-- If editing conversions (pixel/meters, lat/lng, bearings), keep helper functions near usage and add explicit helper names.
-- When updating panel packing logic, prioritize deterministic outputs for the same input.
-- Keep algorithm inputs immutable where possible to avoid hidden side effects.
+- Keep `strict` TypeScript compatibility.
+- Prefer explicit types for exported params/returns.
+- Avoid `any`; use `unknown` plus narrowing.
+- Prefer `type` aliases for payloads and API outputs.
+- Use literal unions for finite states (example: `"landing" | "opening" | "app"`).
+- Keep algorithm inputs immutable unless mutation is required.
 
-## API and data patterns
+### Imports and Modules
 
-- API contract changes must stay aligned with route expectations.
-- Keep client-side calls in `lib/api.ts` centralized rather than scattering fetch calls.
-- Validate external or user-supplied input with schema checks where practical.
-- Redact and avoid logging secret values or full tokens.
+- Import order:
+  1) React/Next
+  2) third-party packages
+  3) internal modules from `@/`
+  4) type-only imports
+- Prefer `@/` for cross-folder imports.
+- Use relative imports for same-folder modules when clearer.
+- Keep client-only and server-only code clearly separated.
 
-## Environment and config
+### Formatting and File Hygiene
 
-- `NEXT_PUBLIC_API_ORIGIN` is optional and only needed when pointing the frontend at an external backend.
-- `NEXT_PUBLIC_MAPBOX_TOKEN` is optional and only used by legacy components (for example `components/roof-canvas.tsx`).
-- Keep `.env` files local and untracked.
-- If adding new environment variables, document them here and in relevant files.
+- Follow the style already used in the file you edit.
+- Keep quote style and semicolon style consistent per file.
+- Do not reformat unrelated lines.
+- Keep functions/helpers focused and readable.
+- Prefer clear names over abbreviations.
 
-## Testing and review habits
+### Naming Conventions
 
-- Before finishing a change, run:
-  1) `npm run lint`
-  2) `npm run build`
-- If change is in algorithmic code, also run single-file lint command first.
-- PR description should include what changed, why it changed, and verification commands used.
+- React components: PascalCase (`SunnyviewExperience`).
+- Hooks: `useXxx` (`useToast`, `useIsMobile`).
+- Functions/variables: camelCase.
+- Constants: UPPER_SNAKE_CASE.
+- Types/interfaces: PascalCase (`EstimateOut`, `PackPanelsParams`).
+- Zod schema names: `<Feature>Schema`.
 
-## PR and task discipline
+### React and Next.js
 
-- Make minimal, targeted changes; avoid broad refactors unless requested.
-- Keep file-level scope tight.
-- Do not edit unrelated formatting on untouched files.
-- Prefer small helper refactors over monolithic rewrites.
+- Add `"use client"` when using hooks, refs, event handlers, or browser APIs.
+- Keep secrets/API keys in server code only.
+- For routes using Node APIs (for example `Buffer`), keep `runtime = "nodejs"`.
+- Keep heavy geometry/math logic in `lib/` or pure helper modules.
 
-## If uncertain
+### API Validation, Errors, and Resilience
 
-- Ask for the intended behavior for user-facing flows before changing formulas, heuristics, or UX defaults.
-- Keep changes backwards compatible where possible.
+- Validate public route input with Zod.
+- Use `safeParse`; return `400` with `issues` for invalid input.
+- Wrap external calls in `try/catch` with user-safe fallback responses.
+- Throw `Error` objects (not strings).
+- Use `AbortController` timeouts for upstream calls.
+- Preserve existing rate limiting (`requestClientKey` + `takeRateLimitToken`).
+- Preserve bounded in-memory cache patterns (`globalThis` maps).
+- Keep logs concise; never log secrets/tokens.
+- Keep deterministic behavior for panel packing and geometry calculations.
+
+## Environment Variables
+
+Document any new variable in `.env.local.example` and related docs.
+
+- `NEXT_PUBLIC_API_ORIGIN` (optional external backend origin)
+- `NEXT_PUBLIC_CESIUM_ION_TOKEN` (optional Cesium token)
+- `NEXT_PUBLIC_MAPBOX_TOKEN` (optional legacy/static-map fallback provider)
+- `SEGMENT_SERVICE_URL` (optional CV segmenter)
+- `SEGMENT_IMAGE_FETCH_ALLOWLIST` (optional fetch hostname allowlist)
+- `PVWATTS_API_KEY` (required for live PVWatts; fallback used if missing)
+- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (optional Redis cache)
+- `CO2_KG_PER_KWH` (optional CO2 factor override)
+- `GEMINI_API_KEY` (optional Gemini routes)
+- `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (optional TTS)
+
+## PR and Change Discipline
+
+- Keep diffs minimal and task-focused.
+- Avoid broad refactors unless requested.
+- Do not modify unrelated files for formatting only.
+- In PR notes include: what changed, why, and exact verification commands.
+- If work touches missing backend routes, explicitly mark them as external dependencies.
