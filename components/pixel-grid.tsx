@@ -145,7 +145,7 @@ export function PixelGrid({
         if (cols <= 0 || rows <= 0) break
         const centerCol = Math.floor(Math.random() * cols)
         const centerRow = Math.floor(Math.random() * rows)
-        const basePower = rand(0.2, 0.44) * intensityScale
+        const basePower = rand(0.26, 0.57) * intensityScale
         igniteAmbientCluster(centerCol, centerRow, basePower)
       }
     }
@@ -277,7 +277,7 @@ export function PixelGrid({
           cell.brightness += (cell.target - cell.brightness) * smoothing
 
           if (sparkleRef.current) {
-            const sparkleDecay = Math.exp(-dt * (0.72 + motionScale * 0.18))
+            const sparkleDecay = Math.exp(-dt * (0.52 + motionScale * 0.13))
             cell.sparkle *= sparkleDecay
             if (cell.sparkle < 0.001) cell.sparkle = 0
           } else {

@@ -7,8 +7,8 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             web = container "Web Client" "Search + trace roof polygon; runs deterministic panel packing locally in the browser." "Next.js (React in browser)" "Web"
             api = container "API / BFF" "Next.js route handlers that proxy external APIs, rate limit, cache, and hide keys." "Next.js Route Handlers (Node.js)" "API"
             segmenter = container "CV Segmenter" "Optional auto-outline service (roof + obstacles) for /api/segment." "Python (FastAPI)" "ML,Optional"
-            mongo = container "History Store" "Optional persistence for /api/history (per-visitor Solar Snapshot history)." "MongoDB" "Database,Optional"
-            redis = container "Cache" "Optional Redis cache for PVWatts estimates (24h)." "Upstash Redis" "Cache,Optional"
+            mongo = container "MongoDB" "Optional persistence for /api/history (per-visitor Solar Snapshot history)." "MongoDB" "Database,Optional"
+            redis = container "Upstash Redis" "Optional cache for PVWatts estimates (24h)." "Upstash Redis" "Cache,Optional"
         }
 
         geoApis = softwareSystem "Geospatial APIs (ArcGIS + OSM)" "Geocoding, satellite imagery export, and building footprints (with fallbacks)." "External"
@@ -59,6 +59,8 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             include web
             include api
             include segmenter
+            include mongo
+            include redis
             include geoApis
             include solarWeatherApis
             include aiVoiceApis
@@ -78,6 +80,20 @@ workspace "Sunnyview" "Rooftop solar feasibility demo (SF Hacks 2026)." {
             }
 
             element "Boundary" {
+                background #05060A
+                color #05060A
+                stroke #05060A
+                strokeWidth 1
+            }
+
+            element "Boundary:Software System" {
+                background #05060A
+                color #05060A
+                stroke #05060A
+                strokeWidth 1
+            }
+
+            element "Boundary:Container" {
                 background #05060A
                 color #05060A
                 stroke #05060A

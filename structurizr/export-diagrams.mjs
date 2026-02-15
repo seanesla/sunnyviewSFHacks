@@ -323,10 +323,8 @@ async function main() {
 
           const svgSizer = document.createElement("div");
           svgSizer.style.cssText =
-            "position: relative; overflow: hidden; border-radius: 24px;" +
-            " border: 1px solid rgba(148,163,184,0.16);" +
-            " background: #05060A;" +
-            " box-shadow: 0 28px 90px rgba(0,0,0,0.65);";
+            "position: relative; overflow: hidden;" +
+            " background: #05060A;";
 
           const svgWrap = document.createElement("div");
           svgWrap.style.cssText = "display: inline-block; transform-origin: top left;";
@@ -358,6 +356,48 @@ async function main() {
             rect.setAttribute("stroke-width", "1");
             rect.setAttribute("rx", "10");
             rect.setAttribute("ry", "10");
+          });
+
+          // Remove Structurizr-generated boundary boxes (software system/group frames)
+          // so exports only show nodes + connectors.
+          svg.querySelectorAll(".structurizrBoundary").forEach((boundary) => {
+            const group = boundary.closest("g");
+            if (group) {
+              group.setAttribute("display", "none");
+              group.style.display = "none";
+            } else {
+              boundary.setAttribute("display", "none");
+              boundary.style.display = "none";
+            }
+          });
+
+          // Fallback for exports where boundary class names are stripped.
+          // Hide very large dark rectangles that act as frame/boundary boxes.
+          const rawW = Number.parseFloat(svg.getAttribute("width") ?? "0");
+          const rawH = Number.parseFloat(svg.getAttribute("height") ?? "0");
+          svg.querySelectorAll("rect").forEach((rect) => {
+            const w = Number.parseFloat(rect.getAttribute("width") ?? "0");
+            const h = Number.parseFloat(rect.getAttribute("height") ?? "0");
+            if (!rawW || !rawH) return;
+            if (w < rawW * 0.55 || h < rawH * 0.35) return;
+
+            const fill = (rect.getAttribute("fill") ?? "").replace(/\s+/g, "").toLowerCase();
+            const darkFill =
+              fill === "#05060a" ||
+              fill === "#0b1220" ||
+              fill === "rgb(5,6,10)" ||
+              fill === "rgb(11,18,32)";
+
+            if (darkFill) {
+              const group = rect.closest("g");
+              if (group) {
+                group.setAttribute("display", "none");
+                group.style.display = "none";
+              } else {
+                rect.setAttribute("display", "none");
+                rect.style.display = "none";
+              }
+            }
           });
 
           // Hide relationship text labels in exported README images to avoid clutter
