@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { ArrowRight, BarChart3, LayoutGrid, QrCode } from "lucide-react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { ArrowRight } from "lucide-react"
 import { gsap } from "gsap"
 import { AccentColorControl } from "@/components/accent-color-control"
 import { LogoPlate } from "@/components/logo-plate"
@@ -136,15 +136,6 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             : "invalid"
           : "checking"
 
-  const quickCards = useMemo(
-    () => [
-      { label: "Panel Layout", Icon: LayoutGrid },
-      { label: "Energy Report", Icon: BarChart3 },
-      { label: "Share QR", Icon: QrCode },
-    ],
-    []
-  )
-
   useLayoutEffect(() => {
     if (!visible) return
 
@@ -162,7 +153,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
 
     const ctx = gsap.context(() => {
       const staged = q(
-        "[data-motion='logo'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='quick-cards'], [data-motion='gemini']"
+        "[data-motion='logo'], [data-motion='kicker'], [data-motion='headline'], [data-motion='copy'], [data-motion='cta-row'], [data-motion='gemini']"
       )
 
       if (!reduceMotion) {
@@ -175,21 +166,6 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
             duration: 0.52,
             ease: "power3.out",
             stagger: 0.058,
-          }
-        )
-
-        const quickCardEls = q("[data-motion='quick-card']")
-        gsap.fromTo(
-          quickCardEls,
-          { y: 7, opacity: 0.86, scale: 0.988 },
-          {
-            y: 0,
-            opacity: 1,
-            scale: 1,
-            duration: 0.42,
-            ease: "power2.out",
-            stagger: 0.04,
-            delay: 0.2,
           }
         )
 
@@ -220,7 +196,7 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
 
       if (reduceMotion) return
 
-      const interactiveEls = q("[data-motion='quick-card'], [data-motion='cta']")
+      const interactiveEls = q("[data-motion='cta']")
 
       for (const el of interactiveEls) {
         const enter = () => {
@@ -329,19 +305,6 @@ export function HeroSection({ onStart, visible }: HeroSectionProps) {
         <span className="hero-landing__cta-hint text-xs text-muted-foreground">
           or click the Earth to begin
         </span>
-      </div>
-
-      <div className="hero-landing__quick-cards mt-1 grid grid-cols-3 gap-2 sm:gap-3" data-motion="quick-cards">
-        {quickCards.map(({ label, Icon }) => (
-          <div
-            key={label}
-            className="hero-quick-card glass-card gradient-border flex h-16 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-primary/38 bg-background/45 px-2 text-center shadow-[0_10px_26px_-18px_rgba(0,0,0,0.95)]"
-            data-motion="quick-card"
-          >
-            <Icon size={13} className="text-primary/90" />
-            <span className="text-[11px] font-semibold text-foreground/95">{label}</span>
-          </div>
-        ))}
       </div>
 
       <div className="hero-landing__gemini glass-card gradient-border rounded-xl p-3.5 sm:p-4" data-motion="gemini">
