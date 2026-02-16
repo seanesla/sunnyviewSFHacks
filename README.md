@@ -1,5 +1,7 @@
 # Sunnyview
 
+🏆 **Winner: Best Use of Gemini API at SF Hacks 2026** 🏆
+
 [![Live Site](https://img.shields.io/badge/Live-sunnyview--sf--hacks.vercel.app-0ea5e9?style=for-the-badge)](https://sunnyview-sf-hacks.vercel.app)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?style=for-the-badge)](https://www.typescriptlang.org/)
